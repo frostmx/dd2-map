@@ -192,9 +192,17 @@ function createTracker() {
     if (dist > cfg.enterRadius || anchorTicks >= ANCHOR_MAX_TICKS) anchorReady = true;
   }
 
-  function leave() {
+  // Why an area change happened. The two rules fail in opposite ways — the doorway
+  // can fire when you merely brush past a cave mouth, and the containment backstop
+  // can eject you from a cave you're standing in if the inset scale is off enough to
+  // map you outside the panel. Those need completely different fixes, so the log has
+  // to say which one it was.
+  let lastReason = null;
+
+  function leave(reason) {
     current = null;
     outsideTicks = 0;
+    lastReason = reason;
   }
 
   // Have we left the dungeon WITHOUT going back through its doorway?
@@ -269,8 +277,12 @@ function createTracker() {
         armed = false;
         // The same doorway both ways: if we're already inside the dungeon this door
         // belongs to, we're on our way out; otherwise we're on our way in.
-        if (current && current.subregionId === near.door.subregionId) leave();
-        else enter(near.door, pos, near.dist);
+        if (current && current.subregionId === near.door.subregionId) {
+          leave(`through the doorway (${near.dist.toFixed(1)}u from it)`);
+        } else {
+          enter(near.door, pos, near.dist);
+          lastReason = `through the doorway (${near.dist.toFixed(1)}u from it)`;
+        }
         return current;
       }
 
@@ -281,7 +293,13 @@ function createTracker() {
       // a moment of bad geometry can't kick us out of a cave we're standing in.
       if (current) {
         outsideTicks = outsideInset(pos) ? outsideTicks + 1 : 0;
-        if (outsideTicks >= cfg.outsideDwellTicks) leave();
+        if (outsideTicks >= cfg.outsideDwellTicks) {
+          // If this fires while you are genuinely still in the cave, the inset scale
+          // is wrong — it is mapping you off the edge of the panel. Say so loudly:
+          // the fix is a 3-point measurement, not a tweak to this rule.
+          leave(`MAPPED OUTSIDE the inset panel (${near.dist.toFixed(0)}u from the doorway) ` +
+                '— if you were still inside, the inset scale is off; measure it with the 3-point flow');
+        }
       }
       return current;
     },
@@ -295,11 +313,12 @@ function createTracker() {
     // Insert: force in/out. In the overworld this enters the nearest dungeon
     // regardless of distance, so it also works as "I'm in here, the app missed it".
     toggle() {
-      if (current) { leave(); armed = false; return current; }
+      if (current) { leave('Insert'); armed = false; return current; }
       if (!lastPos) return current;
       const near = nearestDoor(lastPos);
       if (!near) return current;
       enter(near.door, lastPos, near.dist);
+      lastReason = `Insert (nearest doorway ${near.dist.toFixed(0)}u away)`;
       armed = false;
       return current;
     },
@@ -330,6 +349,10 @@ function createTracker() {
     },
 
     current: () => current,
+    // Why the area last changed. The two auto rules fail in opposite ways and need
+    // opposite fixes, so this is not decoration — it's how you tell a doorway
+    // misfire from the inset scale being wrong.
+    reason: () => lastReason,
     // Nearest doorway and how far off it is, in game units. Published on the
     // position feed purely so the control window can show it: it's what tells you
     // whether enterRadius is set sensibly, and the doorways inherit the world

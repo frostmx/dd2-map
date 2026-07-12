@@ -106,9 +106,11 @@ function areaLabel() {
   if (!currentArea) return 'Overworld';
   const name = `${currentArea.name} ${currentArea.floor}`.trim();
   const rec = areas.areas[currentArea.key];
-  if (!areas.insetLinear) return `${name} — no inset scale yet (calibrate one dungeon)`;
-  if (!rec) return `${name} — not calibrated`;
-  return `${name}${rec.auto ? ' — auto' : ''}`;
+  const lin = areas.insetLinear;
+  if (!lin) return `${name} — no inset scale (is the world map calibrated?)`;
+  if (!rec) return `${name} — not placed yet (walk in through its entrance)`;
+  const how = rec.auto ? 'auto' : 'by hand';
+  return `${name} — ${how}, ${lin.scale ? `${lin.scale.toFixed(2)}x scale` : 'scale set'}`;
 }
 
 function updateAreaLabel() {
@@ -491,14 +493,22 @@ window.dd2.onCalibrationClickResult((data) => {
           f: fit.f,
           points: pts,
         },
+      }).then((res) => {
+        // The experiment: how does a hand-measured inset scale compare with the one
+        // derived from mapgenie's portal graph? If they agree, the derivation stands
+        // on its own and no dungeon ever needs calibrating.
+        if (res && res.measured && res.derived) {
+          const off = 100 * Math.abs(res.measured - res.derived) / res.derived;
+          setStatus(
+            `Measured ${res.measured.toFixed(3)}x the world scale here, vs ` +
+            `${res.derived.toFixed(3)}x derived from the portal graph — ${off.toFixed(1)}% apart.` +
+            (q.warnings.length ? ` (But ${q.warnings.join('; ')}.)` : ''),
+          );
+        }
       });
       runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
       setCalibrationMode(false);
-      setStatus(
-        `Inset scale seeded from ${currentArea.name}. Every other dungeon now ` +
-        'calibrates itself when you walk in.' +
-        (q.warnings.length ? ` (But ${q.warnings.join('; ')}.)` : ''),
-      );
+      setStatus(`Measuring the inset scale from ${currentArea.name}…`);
     } else {
       // Merge rather than replace — the world affine is only part of what this
       // window holds. Keep the raw correspondences too, so each future Refine can

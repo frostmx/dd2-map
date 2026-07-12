@@ -114,11 +114,40 @@ const saveView = (data) => configStore.save('view', data);
 // renderers use it to pick the matching transform.
 const tracker = createTracker();
 let areas = areaStore.empty();       // insetLinear + the per-dungeon translations
+let areaMeta = null;                 // mapgenie's region/portal graph
 let lastAreaKey = null;              // for edge detection on the broadcast
 
 function pushAreas() {
   tracker.setAreas(areas);  // the tracker's containment backstop reads these
   broadcast('areas:state', areas);
+}
+
+// The shared inset linear part, measured from mapgenie's own data — no calibration.
+//
+// The insets share the world map's rotation exactly and differ only by a uniform
+// scale, and that scale is recoverable from the portal graph: a dungeon with two
+// entrances gives two free correspondences, and the ratio between the inset
+// displacement and the one the world affine predicts IS the scale. (Measured: ~1.97,
+// i.e. the insets are drawn at twice the world's scale.) See areaStore.
+//
+// So dungeons work with nothing asked of the player. A hand calibration inside a
+// dungeon still overrides this — that's how you'd correct it if it were ever wrong.
+function ensureInsetLinear() {
+  if (areas.insetLinear && !areas.insetLinear.derived) return;  // hand-set: leave it
+  if (!areaMeta) return;
+  const worldCal = loadCalibration();
+  const derived = areaStore.deriveInsetLinear(areaMeta, worldCal);
+  if (!derived) return;
+  const prev = areas.insetLinear && areas.insetLinear.scale;
+  if (prev && Math.abs(prev - derived.scale) < 1e-6) return;  // unchanged; don't churn
+  areas.insetLinear = derived;
+  areaStore.save(areas);
+  pushAreas();
+  console.log(
+    `[areas] inset scale derived from the portal graph: ${derived.scale.toFixed(3)}x ` +
+    `the world map (${derived.samples} entrance pairs). No calibration needed — ` +
+    'walk into any dungeon and it places itself.',
+  );
 }
 
 // A crossing is a free correspondence: standing in the doorway, we know both the
@@ -129,10 +158,12 @@ function absorbAnchor() {
   const anchor = tracker.takeAnchor();
   if (!anchor) return;
   if (!areas.insetLinear) {
+    // Only reachable if the inset scale couldn't be derived — which needs the world
+    // map calibrated, since the whole measurement is made against that affine.
     console.log(
-      `[areas] entered "${anchor.name}" but no inset scale is known yet — ` +
-      'calibrate one dungeon with the 3-point flow to seed it, and every other ' +
-      'dungeon then calibrates itself on entry.',
+      `[areas] entered "${anchor.name}" but there's no inset scale to place it with. ` +
+      'Calibrate the world map first (the scale is measured against it), or set it by ' +
+      'hand with the 3-point flow inside a dungeon.',
     );
     return;
   }
@@ -212,7 +243,8 @@ function startMemoryPolling() {
       const areaKey = area ? area.key : null;
       if (areaKey !== lastAreaKey) {
         lastAreaKey = areaKey;
-        console.log(`[areas] now in: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
+        const where = area ? `${area.name} ${area.floor}`.trim() : 'overworld';
+        console.log(`[areas] now in: ${where}  <- ${tracker.reason() || 'startup'}`);
       }
 
       broadcast('game-position', {
@@ -552,8 +584,10 @@ ipcMain.handle('calibration:load', () => loadCalibration());
 ipcMain.handle('calibration:save', (_event, data) => {
   saveCalibration(data);
   // The doorways live in GAME coords, derived by inverting this affine — so a
-  // recalibration or a Refine moves every one of them.
+  // recalibration or a Refine moves every one of them. The derived inset scale is
+  // measured against this affine too, so it has to be re-derived.
   tracker.setWorldCalibration(data);
+  ensureInsetLinear();
   return true;
 });
 
@@ -565,8 +599,10 @@ ipcMain.handle('calibration:save', (_event, data) => {
 ipcMain.handle('areas:metadata', (_event, meta) => {
   if (!meta || !Array.isArray(meta.portals)) return false;
   configStore.save('mapgenie-areas', meta);
+  areaMeta = meta;
   tracker.setMetadata(meta);
   console.log(`[areas] ${tracker.doorCount()} dungeon doorways placed in game coords`);
+  ensureInsetLinear();
   return true;
 });
 
@@ -576,14 +612,29 @@ ipcMain.handle('areas:load', () => areas);
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then
 // needs no clicks at all — the crossing anchor plus this linear part is the whole
 // transform.
+// A hand calibration inside a dungeon. No longer REQUIRED — the inset scale is
+// derived from the portal graph on its own — but kept as the way to measure it
+// properly and to override the derivation if it's ever wrong.
+//
+// It also reports the fitted scale against the derived one, which is the experiment
+// that tells us whether the derivation can be trusted.
 ipcMain.handle('areas:calibrate', (_event, { areaKey, area, linear }) => {
   if (!areaKey || !area || !linear) return false;
-  areas.insetLinear = linear;
+  const worldCal = loadCalibration();
+  const measured = areaStore.scaleOf(linear, worldCal);
+  const derived = areas.insetLinear && areas.insetLinear.scale;
+
+  areas.insetLinear = { ...linear, scale: measured, derived: false };
   areas.areas[areaKey] = { ...area, auto: false };
   areaStore.save(areas);
   pushAreas();
-  console.log(`[areas] inset scale seeded from "${area.name}"; ${Object.keys(areas.areas).length} area(s) known`);
-  return true;
+
+  const cmp = (derived && measured)
+    ? ` — measured ${measured.toFixed(3)}x the world map, vs ${derived.toFixed(3)}x derived ` +
+      `from the portal graph (${(100 * Math.abs(measured - derived) / derived).toFixed(1)}% apart)`
+    : '';
+  console.log(`[areas] inset scale set by hand from "${area.name}"${cmp}`);
+  return { measured, derived };
 });
 
 // Refine, inside a dungeon: nudge the area's translation. Deliberately NOT the
@@ -622,7 +673,11 @@ app.whenReady().then(() => {
   tracker.setAreas(areas);
   tracker.setWorldCalibration(loadCalibration());
   const cachedMeta = configStore.load('mapgenie-areas');
-  if (cachedMeta) tracker.setMetadata(cachedMeta);
+  if (cachedMeta) {
+    areaMeta = cachedMeta;
+    tracker.setMetadata(cachedMeta);
+    ensureInsetLinear();  // so dungeons work from the first tick, before mapgenie loads
+  }
 
   createWindow();
   createOverlay();

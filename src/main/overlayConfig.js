@@ -22,8 +22,15 @@ const DEFAULTS = {
   // Game units, for the doorway detector (src/main/areaTracker.js). enterRadius has
   // to absorb the world affine's own fit error too, since the doorways' game coords
   // are derived from it — so it is a knob, not a constant.
-  enterRadius: 10,
-  rearmRadius: 30,
+  //
+  // 10 was too tight: measured live, three consecutive crossings of the same cave
+  // fired at 9.9, 9.9 and 10.0 units — i.e. the player's real path never comes closer
+  // than ~10u to where we compute the doorway, so detection was scraping its own
+  // threshold and a slightly wider approach would have missed the entrance outright.
+  // 15 gives that a 50% margin while staying tight enough not to fire when you merely
+  // run past a cave mouth.
+  enterRadius: 15,
+  rearmRadius: 40,
   // How long (in 30Hz ticks) you must map outside a dungeon's own inset panel before
   // the app concludes you left it without using the doorway. The doorway rule alone
   // misses a wide exit path; this is the backstop.
