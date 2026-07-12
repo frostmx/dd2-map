@@ -31,13 +31,26 @@
 // the override exists rather than being a fallback.
 
 const DEFAULTS = {
-  // Game units. Measured in-game: coming within ~10 units of an entrance means you
-  // are in the doorway. Deliberately configurable — it also has to absorb the world
-  // affine's own fit error, since the entrance positions are derived from it.
-  enterRadius: 10,
-  // Must get this far from the doorway before it can fire again. Comfortably wider
-  // than enterRadius so loitering in the entrance can't toggle repeatedly.
-  rearmRadius: 30,
+  // Game units. Coming within this of an entrance means you are in the doorway.
+  // Deliberately configurable — it also has to absorb the world affine's own fit
+  // error, since the doorway positions are derived from it.
+  enterRadius: 15,
+
+  // Ticks (at 30Hz) you must be OUTSIDE enterRadius before the doorway can fire
+  // again. Not a distance — a dwell.
+  //
+  // This was a radius (you had to get N units clear before re-arming) and that was
+  // simply the wrong mechanism. The latch exists to stop ONE crossing firing over and
+  // over while you stand in the doorway; that is about leaving the radius, not about
+  // getting far away. As a radius it broke re-entry: linger anywhere near a cave
+  // mouth after stepping out and you never re-armed, so walking back in did nothing
+  // and needed a forced Insert. (Seen repeatedly in live play, at 40 AND at 20.)
+  //
+  // As a dwell it does its job exactly and nothing more: standing in a doorway never
+  // leaves the radius, so it can never strobe — while stepping out and turning round
+  // re-arms in half a second, which is what you want.
+  rearmDwellTicks: 15,
+
   // Ticks (at 30Hz) the player must map outside the dungeon's inset panel before we
   // conclude they left without using the doorway. ~0.7s.
   outsideDwellTicks: 20,
@@ -68,6 +81,7 @@ function createTracker() {
 
   let current = null;       // null = overworld; else { key, subregionId, floor, name }
   let armed = true;         // can a doorway fire right now?
+  let clearTicks = 0;       // consecutive ticks spent outside enterRadius
   let lastPos = null;
   let lastNear = null;      // nearest doorway + distance, published for the readout
 
@@ -247,11 +261,6 @@ function createTracker() {
   return {
     setConfig(next) {
       cfg = { ...DEFAULTS, ...(next || {}) };
-      // rearmRadius <= enterRadius would latch the doorway off forever (you can never
-      // be far enough to re-arm while still being close enough to fire), and a large
-      // one breaks re-entry into a cave you just left. Keep it just outside.
-      const floor = cfg.enterRadius + 5;
-      if (!(cfg.rearmRadius > cfg.enterRadius)) cfg.rearmRadius = floor;
     },
     setMetadata(next) {
       meta = next;
@@ -276,7 +285,15 @@ function createTracker() {
       if (!near) return current;
       lastNear = { name: near.door.name, dist: near.dist };
 
-      if (near.dist > cfg.rearmRadius) armed = true;
+      // Re-arm by DWELL outside the radius, not by distance from it. Standing in a
+      // doorway never leaves the radius, so this can't strobe; stepping out and
+      // turning round re-arms in half a second, so re-entry just works.
+      if (near.dist > cfg.enterRadius) {
+        clearTicks += 1;
+        if (clearTicks >= cfg.rearmDwellTicks) armed = true;
+      } else {
+        clearTicks = 0;
+      }
 
       if (armed && near.dist <= cfg.enterRadius) {
         armed = false;

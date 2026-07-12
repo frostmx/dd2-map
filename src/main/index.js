@@ -685,7 +685,7 @@ app.whenReady().then(() => {
   areas = areaStore.load();
   tracker.setConfig({
     enterRadius: cfg.enterRadius,
-    rearmRadius: cfg.rearmRadius,
+    rearmDwellTicks: cfg.rearmDwellTicks,
     outsideDwellTicks: cfg.outsideDwellTicks,
   });
   tracker.setAreas(areas);

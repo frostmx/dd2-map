@@ -24,16 +24,13 @@ const DEFAULTS = {
   // are derived from it — so it is a knob, not a constant.
   enterRadius: 15,
 
-  // How far clear of a doorway you must get before it can fire again.
-  //
-  // Must stay just above enterRadius. Its ONLY job is to stop a single crossing
-  // firing over and over while you stand in the doorway — and that job is done the
-  // moment you are outside enterRadius at all. Anything larger breaks re-entry:
-  // measured live at 40, walking out of a cave and turning straight back around did
-  // NOTHING, because you rarely get 40 units clear of a cave mouth before going back
-  // in, so the doorway stayed latched off and the map ignored you. (Cost two forced
-  // Inserts before the log showed why.)
-  rearmRadius: 20,
+  // Ticks (at 30Hz) you must be OUTSIDE enterRadius before the doorway can fire
+  // again. A dwell, NOT a distance — the distance version was the wrong mechanism and
+  // broke re-entry at every value tried (40, then 20): linger near a cave mouth after
+  // stepping out and it never re-armed, so walking back in did nothing and needed a
+  // forced Insert. Standing in a doorway never leaves the radius, so a dwell cannot
+  // strobe, while stepping out and turning round re-arms in half a second.
+  rearmDwellTicks: 15,
   // How long (in 30Hz ticks) you must map outside a dungeon's own inset panel before
   // the app concludes you left it without using the doorway. The doorway rule alone
   // misses a wide exit path; this is the backstop.
