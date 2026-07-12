@@ -5,8 +5,6 @@ map and shows the player's real-time position, read from `DD2.exe` memory.
 Personal use only. No kernel driver — DD2 has no anti-cheat, so user-mode
 `ReadProcessMemory` (via koffi FFI) is sufficient.
 
-Plan file: `%USERPROFILE%\.claude\plans\gentle-inventing-quill.md`
-
 ## Architecture (monolith Electron app)
 
 ```
@@ -30,7 +28,7 @@ dd2-map/
   config/
     dd2.offsets.json  # THE memory findings (pointer chains, offsets, backups)
     calibration.json  # solved world->map affine
-    overlay.json      # overlay prefs (untracked: per-machine runtime state)
+    overlay.json      # overlay prefs (gitignored; bundled into the .exe on build)
   tools/              # RE tooling — how the offsets were FOUND. Not part of the app.
     scanner.js, globalHunt.js, pointerScan.js, testChains.js, findOrigin.js,
     findCellIndex.js, verifyCellIndex.js, watch.js, globalWatch.js, ctLogger.js,
@@ -121,17 +119,23 @@ original capture, a reload, AND a full restart — a deterministic singleton
   first (older saves lack stored `points`, so Refine falls back to a local offset).
 - Webview `dom-ready` timing bug fixed (guarded `runInWebview`).
 - **Follow rendering (hard-won).** mapgenie's map is Mapbox GL (minified; POI icons
-  are GPU symbol layers, `_fadeDuration` 300ms). SHIPPED approach (`renderer.js`
-  `followFrame`): a 60fps rAF loop keeps a smoothed display position (`disp`, eased
+  are GPU symbol layers, `_fadeDuration` 300ms by default). SHIPPED approach
+  (`mapAgent.js` `followFrame`, injected into the mapgenie page and shared by both
+  windows): a 60fps rAF loop keeps a smoothed display position (`disp`, eased
   toward the latest target); when following it `jumpTo`s the camera to `disp` and
   draws our DOM marker at `disp` → **locked-center** follow, smooth tiles + marker.
   Player poll is 30Hz; a manual drag/zoom (movestart with `originalEvent`) suspends
   follow until the player moves >0.15 units/tick.
   - Trade-off: driving the Mapbox camera every frame makes each frame a discrete
     Mapbox "move", which re-runs symbol placement + restarts the icon fade →
-    icons flicker (fixed by zeroing `_fadeDuration` while driving) and can show
-    mild positional wobble. This is inherent to per-frame camera moves on Mapbox
-    GPU symbols. Retargeting `easeTo` every tick instead stutters the tiles.
+    icons flicker and can show mild positional wobble. This is inherent to
+    per-frame camera moves on Mapbox GPU symbols. Retargeting `easeTo` every tick
+    instead stutters the tiles.
+  - Settled on `_fadeDuration = 80ms` while driving (not 0). Zero kills the flicker
+    but also kills Mapbox's symbol-placement throttle, so icons recompute every
+    frame and wobble; 80ms keeps the throttle alive (~12 recomputes/sec) while
+    staying too short to see as a fade. The map's normal 300ms is restored for
+    manual browsing.
   - **Rejected:** a dead-zone (map idle, recenter via one `easeTo` glide only when
     the marker leaves a central box) fully stabilizes the icons but the map no
     longer locks to center — the user rejected that feel (bad for an overlay).
@@ -139,9 +143,9 @@ original capture, a reload, AND a full restart — a deterministic singleton
     Mapbox symbol churn) is impractical: heavy per-frame cost and it throws away
     mapgenie's POI interactivity (click, tooltip, category/preset filters,
     found-state). So locked-center with mild icon wobble is the accepted state.
-- **Live coord readout** in the panel (`local` vs `world`), a **Follow player**
-  checkbox (map re-centers on the marker via `map.setCenter`), and a **Refine**
-  message reporting the correction in game X/Y units.
+- **Live coord readout** in the control panel (`local` vs `world`), a **Follow
+  player** checkbox, the overlay's settings (opacity/brightness sliders, auto-zoom,
+  hide-found), and a **Refine** message reporting the correction in game X/Y units.
 
 ## Overlay (in-game, shipped)
 
@@ -315,6 +319,28 @@ from wherever you set it. Speed comes from the position feed (game units/sec) wi
 strobes the zoom. Zoom is folded into the follow loop's existing per-frame `jumpTo`
 (center + zoom in one move), so it adds no *extra* Mapbox symbol churn beyond the
 locked-center cost already documented below.
+
+## Packaging (portable .exe, shipped)
+
+`npm run dist` (electron-builder) → `dist/DD2Map.exe`, one ~72 MB portable binary.
+
+- **The bundled `config/` is inside `app.asar` and READ-ONLY.** This is the trap:
+  writing there fails *silently*, so calibration and every setting would appear to
+  save and then be gone on the next launch, with no error anywhere. `configStore.js`
+  therefore writes to `app.getPath('userData')/config` when `app.isPackaged`, and on
+  first run falls back to reading the copy shipped inside the asar (which is how the
+  calibration and tuned overlay settings ship with the binary). Dev still reads and
+  writes the repo's `config/`, so hand-editing `config/overlay.json` keeps working.
+- **koffi must be `asarUnpack`ed.** It's a native addon and cannot be loaded from
+  inside an asar — without this there is no `ReadProcessMemory` and no player
+  position.
+- **`win.signAndEditExecutable: false`.** Otherwise electron-builder downloads its
+  `winCodeSign` package, which contains macOS symlinks that Windows refuses to
+  extract without Developer Mode or admin rights, and the build dies there
+  ("Cannot create symbolic link"). Cost: the .exe keeps the default Electron icon
+  and metadata.
+- userData resolves to `%APPDATA%\dd2-map` — Electron's `app.getName()` uses
+  package.json's `name`, NOT electron-builder's `productName` ("DD2 Map").
 
 ## Floating origin — SOLVED by reading the absolute coordinate (Path B, shipped)
 DD2 uses a floating origin: raw ("local") coords re-center at streaming-cell

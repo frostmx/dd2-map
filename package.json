@@ -27,6 +27,7 @@
       "src/**/*",
       "config/dd2.offsets.json",
       "config/calibration.json",
+      "config/overlay.json",
       "package.json"
     ],
     "asarUnpack": [

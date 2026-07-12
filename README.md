@@ -1,8 +1,11 @@
 # DD2 Map
 
-Personal live map overlay for Dragon's Dogma 2: embeds the mapgenie.io world map
-and shows the player's real-time position, read from `DD2.exe`'s memory.
-See `%USERPROFILE%\.claude\plans\gentle-inventing-quill.md` for the full plan.
+Live map overlay for Dragon's Dogma 2: embeds the mapgenie.io world map and shows
+the player's real-time position, read from `DD2.exe`'s memory.
+
+No kernel driver and no injection — DD2 has no anti-cheat, so plain user-mode
+`ReadProcessMemory` (via koffi) is enough. See `FINDINGS.md` for how the memory
+offsets were found and every non-obvious thing learned along the way.
 
 ## Setup
 
@@ -10,33 +13,6 @@ See `%USERPROFILE%\.claude\plans\gentle-inventing-quill.md` for the full plan.
 npm install
 npm start
 ```
-
-## Building a portable .exe
-
-```
-npm run dist
-```
-
-Produces `dist/DD2Map.exe` — a single ~72 MB portable binary, no installer, no
-Node or Electron needed on the target machine. Just run it.
-
-Two things about the packaged build that are easy to get wrong:
-
-- **Settings are written to `%APPDATA%\dd2-map\config\`, not next to the .exe.**
-  The bundled `config/` lives inside `app.asar`, which is **read-only** — writing
-  there fails silently, so calibration and every slider would appear to save and
-  then be gone on restart. `configStore.js` writes to userData instead, seeding
-  from the copy shipped inside the asar on first run. (In dev it still uses the
-  repo's `config/`, so hand-editing `config/overlay.json` works as you'd expect.)
-  Carrying your tuned settings into the packaged app is a copy:
-  `copy config\overlay.json "%APPDATA%\dd2-map\config\"`
-- **Code signing is off** (`win.signAndEditExecutable: false`). electron-builder
-  otherwise downloads its `winCodeSign` package, which contains macOS symlinks that
-  Windows refuses to extract without Developer Mode or admin — the build dies
-  there. The cost of turning it off is that the .exe carries the default Electron
-  icon and metadata. Enable Developer Mode if you want those.
-
-`config/calibration.json` is bundled, so the .exe ships already calibrated.
 
 Two windows open: the **control window** (the map plus the calibration panel —
 this is where you calibrate and browse) and the **overlay**, which starts hidden.
@@ -58,11 +34,18 @@ that's a Windows limitation, not something the app can work around.
 | `F8` | Overlay on / off (also hides the control window while it's up) |
 | `F9` | Base map on / off — off leaves just the POI icons floating over the world |
 | `F10` / `F11` | Zoom out / in |
-| hold `Alt` | Give the overlay the mouse: click POIs, drag the map. Release to hand input back to the game. A blue border shows while it's held. |
+| hold `Alt` | Give the overlay the mouse: click POIs, drag the map, scroll to zoom. Release to hand input back to the game. A blue border shows while it's held. |
 
 The marker is a **dot with an arrow**: the dot is your position, the arrow points
 where you're heading. There's no facing angle in memory, so the heading comes from
 your movement vector — it holds its last direction while you stand still.
+
+**Holding Alt briefly focuses the overlay, so DD2 loses focus for as long as you
+hold it.** That's not incidental, and it's why the mouse works at all: DD2 pins the
+cursor to screen centre and only releases it when it loses focus, so there is no way
+to click a POI without taking focus. Let go of Alt and focus goes straight back to
+the game. (It also means the scroll wheel only reaches the overlay while Alt is
+held — Windows routes the wheel to the focused window. `F10`/`F11` work anytime.)
 
 **Auto-zoom is off by default** — the overlay just holds whatever zoom `F10`/`F11`
 set. Tick *Auto-zoom* in the control window to turn it on: after you've been
@@ -71,17 +54,12 @@ set. Tick *Auto-zoom* in the control window to turn it on: after you've been
 *standing* zoom, and running pulls back from wherever you set it — so the two
 never fight. Turning it off mid-run glides straight back to your standing zoom.
 
-**Holding Alt briefly focuses the overlay, so DD2 loses focus for as long as you
-hold it.** That's not incidental — DD2 pins the cursor to screen centre and only
-releases it when it loses focus, so there is no way to click a POI without taking
-focus. Let go of Alt and focus goes straight back to the game.
-
 ### Opacity and brightness
 
-Sliders in the control window's panel, live while you drag them, persisted to
-`config/overlay.json`. They only ever touch the *overlay* — the game itself is
-never modified. Each of the two modes gets its own opacity **and** brightness,
-because the full map and bare icons want different amounts of both:
+Sliders in the control window's panel, live while you drag them, and persisted.
+They only ever touch the *overlay* — the game itself is never modified. Each of the
+two modes gets its own opacity **and** brightness, because the full map and bare
+icons want different amounts of both:
 
 - **Full map (F9 on)** — `mapOpacity`, `mapBrightness`
 - **Icons only (F9 off)** — `iconOpacity`, `iconBrightness`
@@ -95,50 +73,69 @@ own pixels first is the fix: below about 40% brightness it's darker than the gam
 so a faint overlay reads as a *shadow* over it rather than a wash. Contrast is
 nudged up automatically as it darkens, or roads and labels turn to mud.
 
-Scroll-wheel zoom over the overlay does **not** work, by design: the overlay never
-takes focus from the game (that's what keeps your input in DD2), and Windows only
-routes the wheel to the focused window. Use `F10`/`F11`.
-
 ### Tuning
 
-Everything about how the overlay feels is in `config/overlay.json` — edit and
-relaunch, no code changes:
+Everything about how the overlay feels lives in `config/overlay.json` — edit and
+relaunch, no code changes. (In a packaged build the live copy is in
+`%APPDATA%\dd2-map\config\` — see below.)
 
 | Key | Meaning |
 |---|---|
 | `hotkeys` | Rebind any of the four keys (any Electron accelerator string) |
-| `baseZoom` | The standing zoom. Set by `F10`/`F11` and persisted; `null` = adopt the map's own zoom on first run. Map's range is 7–16. |
+| `baseZoom` | The standing zoom. Set by `F10`/`F11` and persisted; `null` = adopt the map's own zoom on first run. The map's real range is 7–16. |
 | `zoomStep` | How far one `F10`/`F11` press moves the base zoom |
-| `autoZoom` | **Default `false`.** The checkbox in the control window. Everything below only applies when it's on. |
-| `hideFound` | **Default `true`.** Hides POIs you've marked as found — in the *overlay* only; the control window still shows them so you can mark them. mapgenie merely fades found POIs to 40% opacity, which stops reading as a distinction once the overlay's own opacity and brightness are stacked on top. |
+| `autoZoom` | **Default `false`.** The checkbox in the control window. The four keys below only apply when it's on. |
 | `runZoomOut` | How many **zoom levels** below the base to pull back while running. Levels, not a percentage — Mapbox zoom is logarithmic, so one level = 2x the view. `1.4` ≈ 2.6x wider. |
-| `zoomEase` | Per-frame zoom glide rate; higher = snappier |
 | `runSpeed` / `stillSpeed` | Game units/sec thresholds for "running" / "standing still" |
-| `runDwellMs` | How long you must be moving before it zooms out (default 5000 = 5s). The timer survives the dead band between the two speeds and only resets when you actually **stop** — real running dips below any fixed threshold constantly, so a timer that reset on every dip would never reach 5s. |
+| `runDwellMs` | How long you must be moving before it zooms out (default 3000). The timer survives the dead band between the two speeds and only resets when you actually **stop** — real running dips below any fixed threshold constantly, so a timer that reset on every dip would never get there. |
 | `stillDwellMs` | How long you must be still before it zooms back in |
+| `zoomEase` | Per-frame zoom glide rate; higher = snappier |
+| `hideFound` | **Default `true`.** Hides POIs you've marked as found — in the *overlay* only; the control window still shows them so you can mark them. mapgenie merely fades found POIs to 40% opacity, which stops reading as a distinction at all once the overlay's own opacity and brightness are stacked on top. |
 | `mapOpacity` / `mapBrightness` | The full-map sliders above |
 | `iconOpacity` / `iconBrightness` | The icons-only sliders above |
 | `hideWhenGameUnfocused` | Hide the overlay when you alt-tab away from DD2 |
 | `hideMainWindowWithOverlay` | Hide the control window while the overlay is up |
 | `focusable` | Default `true`: Alt focuses the overlay so the game releases the cursor. Set `false` if you'd rather the game never lose focus — but then the cursor stays pinned at screen centre and POIs can't be clicked. |
 
-The terminal prints a `[overlay] map probe:` line on startup with the map's canvas
-alpha, real zoom range and layer count, plus a loud warning for either failure mode
-worth knowing about (a hotkey another app already owns, or a canvas that can't do
-transparency).
+When run from a terminal, startup prints a `[overlay] map probe:` line with the
+map's canvas alpha, real zoom range and layer count, plus a loud warning for the
+two failure modes worth knowing about: a hotkey another app already owns, or a map
+canvas that can't do transparency (which would break icons-only mode).
 
-### Known issue: Electron binary doesn't auto-extract on this machine
+## Building a portable .exe
 
-`npm install`'s Electron postinstall (`@electron/get` + `extract-zip`) downloads
-the zip into `%LOCALAPPDATA%\electron\Cache\` successfully but silently fails to
-extract it (exits 0, no error, `node_modules/electron/dist/` stays empty). Cause
-not yet root-caused. Workaround if `npm start` fails with "Electron failed to
-install correctly":
-
-```bash
-cd node_modules/electron/dist
-unzip -o "$LOCALAPPDATA/electron/Cache/<hash>/electron-v*-win32-x64.zip"
-printf 'electron.exe' > ../path.txt
+```
+npm run dist
 ```
 
-(Find `<hash>` via `ls "$LOCALAPPDATA/electron/Cache"`.)
+Produces `dist/DD2Map.exe` — a single ~72 MB portable binary. No installer, and no
+Node or Electron needed on the target machine. Just run it.
+
+`config/calibration.json` and `config/overlay.json` are bundled, so the .exe ships
+already calibrated and with your tuned settings. (`overlay.json` is gitignored, so
+on a fresh clone it simply isn't there — the build still works and the app falls
+back to the defaults in `src/main/overlayConfig.js`.)
+
+Two things about the packaged build that are easy to get wrong:
+
+- **Settings are written to `%APPDATA%\dd2-map\config\`, not next to the .exe.**
+  The bundled `config/` lives inside `app.asar`, which is **read-only** — writing
+  there fails silently, so calibration and every slider would appear to save and
+  then be gone on restart. `configStore.js` writes to userData instead, seeding
+  from the copy shipped inside the asar on first run. (In dev it still uses the
+  repo's `config/`, so hand-editing `config/overlay.json` works as you'd expect.)
+- **Code signing is off** (`win.signAndEditExecutable: false`). electron-builder
+  otherwise downloads its `winCodeSign` package, which contains macOS symlinks that
+  Windows refuses to extract without Developer Mode or admin — the build dies
+  there. The cost is that the .exe carries the default Electron icon and metadata.
+  Turn it back on (and enable Developer Mode) if you want those.
+
+## Repo layout
+
+- `src/main/` — Electron main: the 30 Hz memory poll, hotkeys, the overlay window.
+- `src/renderer/` — both windows, and `mapAgent.js`, the script injected into the
+  mapgenie page (marker, follow, zoom, icons-only, hide-found, found-sync).
+- `config/` — `dd2.offsets.json` (the memory findings) and the calibration.
+- `tools/` — the reverse-engineering scripts the offsets were found with. Not part
+  of the app; run them from the repo root (`node tools/testChains.js`). Their dumps
+  and logs are gitignored — gigabytes, and all reproducible.
