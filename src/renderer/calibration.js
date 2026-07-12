@@ -24,6 +24,25 @@
     };
   }
 
+  // The other direction: map lng/lat -> game coords. Needed to place mapgenie's
+  // own POIs (specifically the dungeon-entrance portals) in the game's coordinate
+  // space, so the app can tell when the player walks into one.
+  //
+  // Inverting the 2x2 linear part [[a,b],[d,e]] and undoing the translation.
+  // Only defined for the full affine form; the legacy separable form has no
+  // cross-terms to invert and predates any of this.
+  function invert(cal, lng, lat) {
+    if (!cal || typeof cal.e !== 'number' || typeof cal.f !== 'number') return null;
+    const det = cal.a * cal.e - cal.b * cal.d;
+    if (!Number.isFinite(det) || det === 0) return null;
+    const dl = lng - cal.c - (cal.offsetLng || 0);
+    const dt = lat - cal.f - (cal.offsetLat || 0);
+    return {
+      x: (cal.e * dl - cal.b * dt) / det,
+      y: (-cal.d * dl + cal.a * dt) / det,
+    };
+  }
+
   // A stale or degenerate transform can produce out-of-range coordinates, which
   // Mapbox rejects (throwing on every tick). Callers skip the update instead.
   function isValidLngLat(ll) {
@@ -32,5 +51,5 @@
       && Math.abs(ll.lat) <= 90 && Math.abs(ll.lng) <= 180;
   }
 
-  window.DD2Calib = { apply, isValidLngLat };
+  window.DD2Calib = { apply, invert, isValidLngLat };
 })();
