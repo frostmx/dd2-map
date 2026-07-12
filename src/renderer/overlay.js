@@ -10,6 +10,12 @@ const webview = document.getElementById('mapView');
 let cfg = null;
 let calibration = null;
 
+// The per-dungeon inset transforms. Read-only here — the control window authors
+// them and main pushes every change down, so the two windows can never disagree
+// about where the player is.
+let areas = { insetLinear: null, areas: {} };
+window.dd2overlay.onAreasState((state) => { areas = state; });
+
 let webviewReady = false;
 let markerInstalled = false;
 let probeDone = false;
@@ -128,6 +134,23 @@ function persistBaseZoom() {
 }
 
 let lastPushedZoom = null;
+let currentAreaKey = null;   // null = overworld; set from the position feed
+
+// Inside a dungeon the map is drawn at a DIFFERENT scale, so the same zoom level
+// shows a different amount of world. The insets are ~2x the world's scale, so
+// holding baseZoom underground would show you half as much ground as it does on the
+// surface — the map reads as if it zoomed in on you the moment you stepped inside.
+//
+// Mapbox zoom is logarithmic (one level = 2x the view), so the correction is exactly
+// log2(scale): a 2x inset needs one level OUT to cover the same ground. Derived from
+// the scale we already have, not a new knob — and it tracks automatically if the
+// scale is later measured properly.
+function zoomOffset() {
+  if (!currentAreaKey) return 0;                    // overworld: baseZoom means what it says
+  const scale = areas.insetLinear && areas.insetLinear.scale;
+  if (!scale || scale <= 0) return 0;
+  return -Math.log2(scale);
+}
 
 function pushZoomTarget() {
   if (baseZoom == null) return;
@@ -136,9 +159,11 @@ function pushZoomTarget() {
   // is 10.85 — nearly 5 levels out, i.e. ~25x wider. That's why it flew so far.
   // One level = 2x the view, so ~1.4 levels is a modest, useful pull-back.
   const pulledBack = cfg.autoZoom && running;
-  const target = clampZoom(pulledBack ? baseZoom - cfg.runZoomOut : baseZoom);
-  // The target only changes on a hotkey or a run/stand flip — don't re-send it
-  // 30x/sec. The guest's follow loop is already easing toward whatever it holds.
+  const base = baseZoom + zoomOffset();
+  const target = clampZoom(pulledBack ? base - cfg.runZoomOut : base);
+  // The target only changes on a hotkey, a run/stand flip, or walking into a dungeon
+  // — don't re-send it 30x/sec. The guest's follow loop is already easing toward
+  // whatever it holds, so a changed target GLIDES rather than snapping.
   if (target === lastPushedZoom) return;
   lastPushedZoom = target;
   runInWebview(`window.__dd2_set_zoom_target && window.__dd2_set_zoom_target(${target})`);
@@ -190,7 +215,10 @@ function updateRunning(data, now) {
 }
 
 // --- Commands from main (hotkeys) --------------------------------------------
-let baseMapVisible = true;
+// Icons-only until told otherwise. Main asserts the real mode on every F8-on, so
+// this only governs the frames before that command lands — but it has to be false,
+// or the overlay would flash the full map on the way up.
+let baseMapVisible = false;
 
 // The two modes want opposite things, so they get their own opacity: the full map
 // should read as a map, while icons-only floats over live gameplay and must not
@@ -272,7 +300,22 @@ window.dd2overlay.onCommand('overlay:interactive', (interactive) => {
 window.dd2overlay.onGamePosition((data) => {
   if (!cfg || !calibration) return;
 
-  const lngLat = window.DD2Calib.apply(calibration, data.x, data.y);
+  // The transform depends on which area main says we're in: the overworld affine
+  // out in the world, that dungeon's inset transform underground. null means the
+  // area can't be placed (no inset scale seeded yet, or a floor reached by falling
+  // rather than through a portal) — in which case hold the marker still rather than
+  // fall back to the world affine, which would draw you confidently in the wrong
+  // place, out on the surface, while you're in a cave.
+  const transform = window.DD2Calib.forArea(calibration, areas, data.areaKey);
+  if (!transform) return;
+
+  // Walking into a dungeon changes the map's scale under us, so the zoom target has
+  // to move with it (see zoomOffset). Push on the edge only — pushZoomTarget is a
+  // no-op when the target hasn't changed, and the guest eases to it, so the zoom
+  // glides as you step through the doorway rather than jumping.
+  currentAreaKey = data.areaKey || null;
+
+  const lngLat = window.DD2Calib.apply(transform, data.x, data.y);
   if (!window.DD2Calib.isValidLngLat(lngLat)) return;
 
   if (!markerInstalled) {
@@ -307,9 +350,11 @@ window.dd2overlay.onGamePosition((data) => {
 Promise.all([
   window.dd2overlay.loadOverlayConfig(),
   window.dd2overlay.loadCalibration(),
-]).then(([overlayCfg, cal]) => {
+  window.dd2overlay.loadAreas(),
+]).then(([overlayCfg, cal, areaState]) => {
   cfg = overlayCfg;
   calibration = cal;
+  if (areaState) areas = areaState;
   baseZoom = typeof cfg.baseZoom === 'number' ? cfg.baseZoom : null;
   applyOpacity();
   applyBrightness();

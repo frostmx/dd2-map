@@ -24,6 +24,25 @@
     };
   }
 
+  // The other direction: map lng/lat -> game coords. Needed to place mapgenie's
+  // own POIs (specifically the dungeon-entrance portals) in the game's coordinate
+  // space, so the app can tell when the player walks into one.
+  //
+  // Inverting the 2x2 linear part [[a,b],[d,e]] and undoing the translation.
+  // Only defined for the full affine form; the legacy separable form has no
+  // cross-terms to invert and predates any of this.
+  function invert(cal, lng, lat) {
+    if (!cal || typeof cal.e !== 'number' || typeof cal.f !== 'number') return null;
+    const det = cal.a * cal.e - cal.b * cal.d;
+    if (!Number.isFinite(det) || det === 0) return null;
+    const dl = lng - cal.c - (cal.offsetLng || 0);
+    const dt = lat - cal.f - (cal.offsetLat || 0);
+    return {
+      x: (cal.e * dl - cal.b * dt) / det,
+      y: (-cal.d * dl + cal.a * dt) / det,
+    };
+  }
+
   // A stale or degenerate transform can produce out-of-range coordinates, which
   // Mapbox rejects (throwing on every tick). Callers skip the update instead.
   function isValidLngLat(ll) {
@@ -32,5 +51,26 @@
       && Math.abs(ll.lat) <= 90 && Math.abs(ll.lng) <= 180;
   }
 
-  window.DD2Calib = { apply, isValidLngLat };
+  // Which transform applies right now: the overworld affine, or the inset one for
+  // the dungeon floor you're standing in.
+  //
+  // Every inset is drawn at the same scale and rotation, so they all share one 2x2
+  // linear part (`insetLinear`) and differ only by translation. That's why a dungeon
+  // needs a single correspondence rather than three — and why walking through a
+  // doorway, which hands us one for free, is enough to calibrate it.
+  //
+  // Returns null for an area we can't place (no inset scale seeded yet, or a floor
+  // reached by falling rather than through a portal). Callers must treat that as
+  // "don't move the marker" rather than falling back to the overworld affine, which
+  // would confidently draw you in the wrong place.
+  function forArea(worldCal, areas, areaKey) {
+    if (!areaKey) return worldCal;
+    if (!areas || !areas.insetLinear) return null;
+    const area = areas.areas && areas.areas[areaKey];
+    if (!area || typeof area.c !== 'number' || typeof area.f !== 'number') return null;
+    const lin = areas.insetLinear;
+    return { a: lin.a, b: lin.b, c: area.c, d: lin.d, e: lin.e, f: area.f };
+  }
+
+  window.DD2Calib = { apply, invert, forArea, isValidLngLat };
 })();

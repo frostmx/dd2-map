@@ -8,6 +8,13 @@ dist/
 config/overlay.json
 config/view.json
 
+# Derived cache: mapgenie's region/portal graph, re-extracted from the live page on
+# every launch (src/renderer/mapAgent.js's __dd2_extract_areas). 300KB of churn, and
+# worthless without mapgenie reachable anyway — and if it isn't, there's no map to
+# put the markers on either. config/areas.json is NOT ignored: that one holds the
+# solved per-dungeon transforms, which cost real playtime to produce.
+config/mapgenie-areas.json
+
 # Byproducts of the reverse-engineering scripts in tools/: memory dumps,
 # pointer-scan results, watch logs. They run from the repo root and write here.
 # Gigabytes of them, and all reproducible — the findings that came out of them

@@ -513,5 +513,152 @@
 `;
   }
 
-  window.DD2MapAgent = { buildInstallMarker, buildFoundSync };
+  // --- Area / portal extraction ---------------------------------------------
+  //
+  // mapgenie draws each dungeon as an INSET: a separate, zoomed panel placed off
+  // to the side of the playable world, but inside the SAME raster and therefore
+  // the same lng/lat plane. DD2's caves are seamless world geometry, so the game
+  // keeps reporting ordinary world coordinates inside one — which is why the
+  // marker stays out at the cave mouth while the cave's POIs sit far away in the
+  // inset. Fixing that needs a per-dungeon transform, and to build one we need to
+  // know (a) which insets exist and (b) where their entrances are.
+  //
+  // mapgenie hands us both, and exactly, if you know where to look:
+  //
+  // 1. `subregions-data` (map style) — the 74 named dungeon polygons.
+  // 2. `store.getState().map.locationsById` — every location as a full object
+  //    with lat/lng/region_id/description. NOT the geojson source: that carries
+  //    only a trimmed property set with no description, and the description is
+  //    the whole point, because every portal names its destination BY LOCATION ID
+  //    in it:
+  //
+  //      **Transitions to:** [Waterfall Cave 1F](https://mapgenie.io/...?locationIds=328583)
+  //
+  //    Parsing `locationIds=(\d+)` out of those yields a complete portal graph:
+  //    ~131 overworld->dungeon entrances covering all 72 reachable insets, ~123
+  //    exits back out, ~204 floor-to-floor links. Every destination resolves.
+  //
+  // Matching entrances to insets by TITLE would also nearly work (98 of 105 match
+  // exactly) — but only nearly: the rest are spelling variants ("Rainshelter Cave"
+  // vs "Rain Shelter Cave"). The id in the description is exact, so we use that
+  // and never guess.
+  //
+  // Returns a JSON string (or null until the store and style are both up — the
+  // caller retries). One-shot: computes and returns, installing nothing.
+  function buildExtractAreas() {
+    return `
+  (function() {
+    if (!window.map || typeof window.map.getStyle !== 'function') return null;
+    if (!window.store || typeof window.store.getState !== 'function') return null;
+
+    var state = window.store.getState();
+    var byId = state && state.map && state.map.locationsById;
+    if (!byId) return null;
+
+    var style;
+    try { style = window.map.getStyle(); } catch (e) { return null; }
+    var sources = style && style.sources;
+    if (!sources) return null;
+
+    // Region/subregion titles live on the POINT features of these sources; the
+    // POLYGON features carry only an id. Walk both.
+    function readAreas(sourceId) {
+      var src = sources[sourceId];
+      var feats = src && src.data && src.data.features;
+      if (!feats) return null;
+      var out = {};
+      feats.forEach(function(f) {
+        var id = f.properties && f.properties.id;
+        if (id == null) return;
+        var rec = out[id] || (out[id] = { id: id, title: null, bbox: null });
+        if (f.properties.title) rec.title = f.properties.title;
+        if (f.geometry && f.geometry.type !== 'Point') {
+          var b = [Infinity, Infinity, -Infinity, -Infinity];
+          (function walk(c) {
+            if (typeof c[0] === 'number') {
+              b[0] = Math.min(b[0], c[0]); b[1] = Math.min(b[1], c[1]);
+              b[2] = Math.max(b[2], c[0]); b[3] = Math.max(b[3], c[1]);
+            } else { c.forEach(walk); }
+          })(f.geometry.coordinates);
+          rec.bbox = b;
+        }
+      });
+      return out;
+    }
+
+    var regions = readAreas('regions-data');
+    var subregions = readAreas('subregions-data');
+    if (!regions || !subregions) return null; // style still streaming; retry
+
+    // The overworld is whatever is a REGION rather than a SUBREGION — Vermund,
+    // Battahl, Agamen Volcanic Island. Derived, never hardcoded: mapgenie is free
+    // to renumber these and this still holds.
+    var overworld = {};
+    Object.keys(regions).forEach(function(id) { overworld[id] = true; });
+
+    // Subregion title -> id, but ONLY where the title is unambiguous. Used purely
+    // as a fallback below; two subregions share the name "Sealed Mining Shaft", and
+    // a lookup that guessed between them would be worse than not resolving at all.
+    var subByTitle = {};
+    Object.keys(subregions).forEach(function(id) {
+      var t = subregions[id].title;
+      if (!t) return;
+      subByTitle[t] = (t in subByTitle) ? null : Number(id); // null = ambiguous
+    });
+
+    // Which area does a location belong to? Normally just its region_id. But four
+    // portal destinations in mapgenie's data have region_id === null — including the
+    // ONLY edge into Darkhorde Cave, so honouring the gap costs a whole dungeon.
+    // Each of those four is titled exactly like its subregion, so fall back to an
+    // EXACT, UNAMBIGUOUS title match. Anything less certain resolves to null and the
+    // edge is dropped: a mis-assigned portal would silently teleport the marker into
+    // the wrong cave, which is far worse than an uncalibrated one.
+    function areaOf(loc) {
+      var r = loc.region_id;
+      if (r != null && (subregions[r] || regions[r])) return r;
+      if (r == null && loc.title && subByTitle[loc.title]) return subByTitle[loc.title];
+      return null;
+    }
+
+    // Portal edges, from the descriptions. A location can name more than one
+    // destination, so collect them all.
+    var portals = [];
+    Object.keys(byId).forEach(function(id) {
+      var loc = byId[id];
+      if (!loc || !loc.description) return;
+      var re = /locationIds=(\\d+)/g;
+      var m;
+      while ((m = re.exec(loc.description))) {
+        var dest = byId[m[1]];
+        if (!dest) continue; // destination not on this map; skip rather than guess
+        var fromArea = areaOf(loc);
+        var toArea = areaOf(dest);
+        if (fromArea == null || toArea == null) continue; // unplaceable; see areaOf
+        portals.push({
+          fromId: loc.id,
+          fromRegion: fromArea,
+          fromTitle: loc.title,
+          fromLng: loc.longitude,
+          fromLat: loc.latitude,
+          toId: dest.id,
+          toRegion: toArea,
+          toTitle: dest.title,
+          toLng: dest.longitude,
+          toLat: dest.latitude,
+        });
+      }
+    });
+
+    return JSON.stringify({
+      overworldRegionIds: Object.keys(overworld).map(Number),
+      regions: regions,
+      subregions: subregions,
+      portals: portals,
+      locationCount: Object.keys(byId).length,
+    });
+  })();
+`;
+  }
+
+  window.DD2MapAgent = { buildInstallMarker, buildFoundSync, buildExtractAreas };
 })();

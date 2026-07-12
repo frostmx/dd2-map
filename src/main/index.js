@@ -5,6 +5,8 @@ const overlayWindow = require('./overlayWindow');
 const overlayConfig = require('./overlayConfig');
 const configStore = require('./configStore');
 const win32Input = require('./win32Input');
+const areaStore = require('./areaStore');
+const { createTracker } = require('./areaTracker');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -82,7 +84,8 @@ let cfg = null;              // config/overlay.json, with defaults filled in
 let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
 let inputTimer = null;
 let altDown = false;         // last observed Alt state, for edge detection
-let baseMapVisible = true;   // F9 toggles this (false = icons-only)
+// The overlay opens icons-only (see cfg.openIconsOnly); F9 brings the map.
+let baseMapVisible = false;
 let priorForeground = null;  // whose focus we stole, if focusable:true is in use
 
 // A resolved global read is trustworthy only if it sits on the 128-grid relative
@@ -102,6 +105,93 @@ const saveCalibration = (data) => configStore.save('calibration', data);
 // Persisted view preferences (currently just the default zoom level).
 const loadView = () => configStore.load('view');
 const saveView = (data) => configStore.save('view', data);
+
+// --- Dungeon areas -----------------------------------------------------------
+// mapgenie puts each dungeon on an INSET off to the side of the world map. DD2's
+// caves are seamless world geometry, so the game reports ordinary world coords
+// inside one and the marker would otherwise stay out at the cave mouth while the
+// cave's POIs sit far away in the inset. The tracker says which area you're in; the
+// renderers use it to pick the matching transform.
+const tracker = createTracker();
+let areas = areaStore.empty();       // insetLinear + the per-dungeon translations
+let areaMeta = null;                 // mapgenie's region/portal graph
+let lastAreaKey = null;              // for edge detection on the broadcast
+
+function pushAreas() {
+  tracker.setAreas(areas);  // the tracker's containment backstop reads these
+  broadcast('areas:state', areas);
+}
+
+// The shared inset linear part, measured from mapgenie's own data — no calibration.
+//
+// The insets share the world map's rotation exactly and differ only by a uniform
+// scale, and that scale is recoverable from the portal graph: a dungeon with two
+// entrances gives two free correspondences, and the ratio between the inset
+// displacement and the one the world affine predicts IS the scale. (Measured: ~1.97,
+// i.e. the insets are drawn at twice the world's scale.) See areaStore.
+//
+// So dungeons work with nothing asked of the player. A hand calibration inside a
+// dungeon still overrides this — that's how you'd correct it if it were ever wrong.
+function ensureInsetLinear() {
+  if (areas.insetLinear && !areas.insetLinear.derived) return;  // hand-set: leave it
+  if (!areaMeta) return;
+  const worldCal = loadCalibration();
+  const derived = areaStore.deriveInsetLinear(areaMeta, worldCal);
+  if (!derived) return;
+  const prev = areas.insetLinear && areas.insetLinear.scale;
+  if (prev && Math.abs(prev - derived.scale) < 1e-6) return;  // unchanged; don't churn
+  areas.insetLinear = derived;
+  areaStore.save(areas);
+  pushAreas();
+  console.log(
+    `[areas] inset scale derived from the portal graph: ${derived.scale.toFixed(3)}x ` +
+    `the world map (${derived.samples} entrance pairs). No calibration needed — ` +
+    'walk into any dungeon and it places itself.',
+  );
+}
+
+// A crossing is a free correspondence: standing in the doorway, we know both the
+// player's world position AND (from mapgenie's portal graph) exactly where that
+// doorway comes out on the inset. With the shared linear part that's the entire
+// transform, so an unvisited dungeon calibrates itself the moment you walk in.
+function absorbAnchor() {
+  const anchor = tracker.takeAnchor();
+  if (!anchor) return;
+  if (!areas.insetLinear) {
+    // Only reachable if the inset scale couldn't be derived — which needs the world
+    // map calibrated, since the whole measurement is made against that affine.
+    console.log(
+      `[areas] entered "${anchor.name}" but there's no inset scale to place it with. ` +
+      'Calibrate the world map first (the scale is measured against it), or set it by ' +
+      'hand with the 3-point flow inside a dungeon.',
+    );
+    return;
+  }
+  const existing = areas.areas[anchor.areaKey];
+  if (existing && !existing.auto) return;  // hand-calibrated: never overwrite it
+
+  const { c, f } = areaStore.solveTranslation(areas.insetLinear, anchor);
+  areas.areas[anchor.areaKey] = {
+    subregionId: anchor.subregionId,
+    floor: anchor.floor,
+    name: anchor.name,
+    c,
+    f,
+    auto: true,
+    points: [{ gameX: anchor.gameX, gameY: anchor.gameY, lng: anchor.lng, lat: anchor.lat }],
+  };
+  areaStore.save(areas);
+  pushAreas();
+  // The closest approach is the number that matters, and it is NOT the distance the
+  // doorway fired at — that one is always just under enterRadius by construction (the
+  // rule triggers on the tick you cross into the radius), so it says nothing about
+  // how near the doorway you really got. This is what sets how far off the auto
+  // placement starts, and therefore how big a Refine shift you'd have to make.
+  console.log(
+    `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
+    `(closest approach to the doorway: ${anchor.dist.toFixed(1)}u)`,
+  );
+}
 
 // Both the main window and the overlay run the same follow loop off this feed.
 function broadcast(channel, payload) {
@@ -154,7 +244,28 @@ function startMemoryPolling() {
       }
       if (!g) return; // both unresolved this tick (e.g. mid-load); skip, keep handle
 
-      broadcast('game-position', { x: g.x, y: g.y, height, localX, localY });
+      // Which area are we in? Ticked here rather than in a renderer because both
+      // windows need the same answer and neither may disagree with the other.
+      const area = tracker.tick({ x: g.x, y: g.y, height });
+      absorbAnchor();
+      const areaKey = area ? area.key : null;
+      if (areaKey !== lastAreaKey) {
+        lastAreaKey = areaKey;
+        const where = area ? `${area.name} ${area.floor}`.trim() : 'overworld';
+        console.log(`[areas] now in: ${where}  <- ${tracker.reason() || 'startup'}`);
+      }
+
+      broadcast('game-position', {
+        x: g.x,
+        y: g.y,
+        height,
+        localX,
+        localY,
+        areaKey,
+        areaName: area ? area.name : null,
+        areaFloor: area ? area.floor : null,
+        near: tracker.near(),   // nearest doorway + distance, for the readout
+      });
     } catch (err) {
       // DD2.exe likely closed or the chain didn't resolve this tick — drop the
       // handle and retry next tick.
@@ -338,6 +449,14 @@ function registerHotkeys() {
 
   bind(cfg.hotkeys.toggle, 'overlay on/off', () => {
     const enabled = overlayWindow.toggle();
+    if (enabled) {
+      // Assert the opening mode on every F8-on, not just at startup. Otherwise the
+      // mode is sticky: look something up on the full map, hide the overlay, bring
+      // it back mid-fight, and you get a full map over your face. Icons-only is the
+      // mode you play with; the map is a deliberate F9 away.
+      baseMapVisible = !cfg.openIconsOnly;
+      overlayWindow.send('overlay:basemap', baseMapVisible);
+    }
     if (cfg.hideMainWindowWithOverlay && mainWindow && !mainWindow.isDestroyed()) {
       if (enabled) mainWindow.hide(); else mainWindow.show();
     }
@@ -355,6 +474,17 @@ function registerHotkeys() {
   bind(cfg.hotkeys.zoomIn, 'zoom in', () => {
     overlayWindow.send('overlay:zoom-delta', cfg.zoomStep);
   });
+
+  // Manual area override. Auto-detection has two failure modes the player can see
+  // and the app cannot: brushing past a cave mouth without going in, and dropping
+  // through a hole to the floor below without ever touching a portal. These are the
+  // way out of both — not a fallback, a first-class control.
+  const announce = (area) => {
+    console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
+  };
+  bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));
+  bind(cfg.hotkeys.floorUp, 'floor up', () => announce(tracker.stepFloor(1)));
+  bind(cfg.hotkeys.floorDown, 'floor down', () => announce(tracker.stepFloor(-1)));
 }
 
 // Alt-hold (mouse capture) and game-focus follow. Both have to be POLLED:
@@ -461,7 +591,84 @@ ipcMain.on('overlay:probe', (_event, info) => {
 ipcMain.handle('calibration:load', () => loadCalibration());
 ipcMain.handle('calibration:save', (_event, data) => {
   saveCalibration(data);
+  // The doorways live in GAME coords, derived by inverting this affine — so a
+  // recalibration or a Refine moves every one of them. The derived inset scale is
+  // measured against this affine too, so it has to be re-derived.
+  tracker.setWorldCalibration(data);
+  ensureInsetLinear();
   return true;
+});
+
+// --- Dungeon areas IPC -------------------------------------------------------
+
+// The portal graph, extracted from the mapgenie guest by the control window (see
+// mapAgent.buildExtractAreas). Cached so the overlay never has to re-derive it and
+// a mapgenie outage can't take the feature down with it.
+// The control window re-extracts on every guest dom-ready, and the mapgenie SPA
+// navigates on its own, so this arrives repeatedly (measured: 4 times in one session,
+// unprompted). The graph is identical every time, and it's ~300KB — so re-parsing and
+// rewriting it on each one is pure waste. Only act when it actually changed.
+let areaMetaFingerprint = null;
+
+ipcMain.handle('areas:metadata', (_event, meta) => {
+  if (!meta || !Array.isArray(meta.portals)) return false;
+  const fingerprint = `${meta.portals.length}|${Object.keys(meta.subregions || {}).length}|${meta.locationCount}`;
+  if (fingerprint === areaMetaFingerprint) return true;
+  areaMetaFingerprint = fingerprint;
+
+  configStore.save('mapgenie-areas', meta);
+  areaMeta = meta;
+  tracker.setMetadata(meta);
+  console.log(`[areas] ${tracker.doorCount()} dungeon doorways placed in game coords`);
+  ensureInsetLinear();
+  return true;
+});
+
+ipcMain.handle('areas:load', () => areas);
+
+// Seeds the shared inset scale/rotation from a 3-point calibration run inside one
+// dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then
+// needs no clicks at all — the crossing anchor plus this linear part is the whole
+// transform.
+// A hand calibration inside a dungeon. No longer REQUIRED — the inset scale is
+// derived from the portal graph on its own — but kept as the way to measure it
+// properly and to override the derivation if it's ever wrong.
+//
+// It also reports the fitted scale against the derived one, which is the experiment
+// that tells us whether the derivation can be trusted.
+ipcMain.handle('areas:calibrate', (_event, { areaKey, area, linear }) => {
+  if (!areaKey || !area || !linear) return false;
+  const worldCal = loadCalibration();
+  const measured = areaStore.scaleOf(linear, worldCal);
+  const derived = areas.insetLinear && areas.insetLinear.scale;
+
+  areas.insetLinear = { ...linear, scale: measured, derived: false };
+  areas.areas[areaKey] = { ...area, auto: false };
+  areaStore.save(areas);
+  pushAreas();
+
+  const cmp = (derived && measured)
+    ? ` — measured ${measured.toFixed(3)}x the world map, vs ${derived.toFixed(3)}x derived ` +
+      `from the portal graph (${(100 * Math.abs(measured - derived) / derived).toFixed(1)}% apart)`
+    : '';
+  console.log(`[areas] inset scale set by hand from "${area.name}"${cmp}`);
+  return { measured, derived };
+});
+
+// Refine, inside a dungeon: nudge the area's translation. Deliberately NOT the
+// overworld's accumulate-and-re-fit behaviour — the linear part is shared and
+// already known, so there is nothing left to fit. Only the offset can be wrong, and
+// a straight shift is both what's needed and what lets you drag yourself back into
+// place when a crossing anchor lands slightly off.
+ipcMain.on('areas:shift', (_event, { areaKey, dLng, dLat }) => {
+  const area = areas.areas[areaKey];
+  if (!area || !Number.isFinite(dLng) || !Number.isFinite(dLat)) return;
+  area.c += dLng;
+  area.f += dLat;
+  area.auto = false;  // you moved it by hand; a later crossing must not undo that
+  areaStore.save(areas);
+  pushAreas();
+  console.log(`[areas] shifted "${area.name}" ${area.floor}`.trim());
 });
 ipcMain.handle('view:load', () => loadView());
 ipcMain.handle('view:save', (_event, data) => {
@@ -471,6 +678,26 @@ ipcMain.handle('view:save', (_event, data) => {
 
 app.whenReady().then(() => {
   cfg = overlayConfig.load();
+
+  // Areas: the saved per-dungeon transforms, the world affine the doorways are
+  // derived from, and the cached portal graph. The cache means the doorways are live
+  // from the first tick, before the mapgenie guest has even finished loading.
+  areas = areaStore.load();
+  tracker.setConfig({
+    enterRadius: cfg.enterRadius,
+    rearmMargin: cfg.rearmMargin,
+    rearmDwellTicks: cfg.rearmDwellTicks,
+    outsideDwellTicks: cfg.outsideDwellTicks,
+  });
+  tracker.setAreas(areas);
+  tracker.setWorldCalibration(loadCalibration());
+  const cachedMeta = configStore.load('mapgenie-areas');
+  if (cachedMeta) {
+    areaMeta = cachedMeta;
+    tracker.setMetadata(cachedMeta);
+    ensureInsetLinear();  // so dungeons work from the first tick, before mapgenie loads
+  }
+
   createWindow();
   createOverlay();
   registerHotkeys();

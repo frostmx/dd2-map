@@ -19,6 +19,12 @@
       margin-top: 8px; font-family: monospace; font-size: 12px;
       color: #7fd1ff; white-space: pre;
     }
+    /* Which area the tracker thinks you're in. Worth its own line and its own
+       colour: it decides which transform draws the marker, so when the marker is
+       wrong this is the first thing to look at. */
+    #area {
+      margin-top: 4px; font-family: monospace; font-size: 12px; color: #ffd479;
+    }
   </style>
 </head>
 <body>
@@ -54,6 +60,7 @@
       Low brightness = darkens the game instead of washing it white.
     </div>
     <div id="coords">Waiting for DD2…</div>
+    <div id="area">Overworld</div>
     <div id="calibrationStatus">Idle.</div>
   </div>
   <webview

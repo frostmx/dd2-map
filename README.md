@@ -31,10 +31,18 @@ that's a Windows limitation, not something the app can work around.
 
 | Key | Does |
 |---|---|
-| `F8` | Overlay on / off (also hides the control window while it's up) |
+| `F8` | Overlay on / off (also hides the control window while it's up). Always comes up **icons-only**. |
 | `F9` | Base map on / off — off leaves just the POI icons floating over the world |
 | `F10` / `F11` | Zoom out / in |
+| `Insert` | Force enter / exit a dungeon — see [Dungeons](#dungeons) |
+| `PageUp` / `PageDown` | Force a floor change |
 | hold `Alt` | Give the overlay the mouse: click POIs, drag the map, scroll to zoom. Release to hand input back to the game. A blue border shows while it's held. |
+
+**F8 always opens the overlay icons-only** — POI icons floating over the live world,
+no map. That's the mode you play with; the full map is a deliberate `F9` away. The
+mode resets on every F8-on rather than being remembered, so looking something up on
+the map can't leave a full map waiting over your face the next time you bring the
+overlay back mid-fight. (`openIconsOnly: false` in the config flips this.)
 
 The marker is a **dot with an arrow**: the dot is your position, the arrow points
 where you're heading. There's no facing angle in memory, so the heading comes from
@@ -81,7 +89,8 @@ relaunch, no code changes. (In a packaged build the live copy is in
 
 | Key | Meaning |
 |---|---|
-| `hotkeys` | Rebind any of the four keys (any Electron accelerator string) |
+| `hotkeys` | Rebind any of the keys (any Electron accelerator string) |
+| `openIconsOnly` | **Default `true`.** F8 always opens the overlay icons-only, re-asserted on every toggle-on. Set `false` to have it open showing the full map. |
 | `baseZoom` | The standing zoom. Set by `F10`/`F11` and persisted; `null` = adopt the map's own zoom on first run. The map's real range is 7–16. |
 | `zoomStep` | How far one `F10`/`F11` press moves the base zoom |
 | `autoZoom` | **Default `false`.** The checkbox in the control window. The four keys below only apply when it's on. |
@@ -101,6 +110,51 @@ When run from a terminal, startup prints a `[overlay] map probe:` line with the
 map's canvas alpha, real zoom range and layer count, plus a loud warning for the
 two failure modes worth knowing about: a hotkey another app already owns, or a map
 canvas that can't do transparency (which would break icons-only mode).
+
+## Dungeons
+
+mapgenie draws each dungeon as an **inset** — a zoomed panel off to the side of the
+world map. DD2's caves are seamless world geometry, so the game reports ordinary world
+coordinates inside one, and without this the marker would sit out at the cave mouth
+while the cave's POIs sat far away in the inset. **1,227 of the 5,354 POIs (23%) live
+in those insets.**
+
+The app reads mapgenie's own portal graph — every entrance names its destination
+outright — so it knows where all 131 cave mouths are and which inset each leads to.
+Walk through one and the map follows you in.
+
+**You have to do one thing, once.** Every inset is drawn at the same scale, so all of
+them share one transform apart from an offset — and walking through a doorway supplies
+that offset for free. But that shared scale has to be measured once:
+
+1. Go into any dungeon.
+2. In the control window, hit **Start Calibration** and place 3 points, exactly as you
+   would for the world map (walk to a spot, click yourself on the inset).
+
+That's it. Every other dungeon from then on **calibrates itself the moment you walk
+in** — no clicks. The panel shows which area you're in and whether it was auto-placed.
+
+If a dungeon's marker sits slightly off, hit **Refine** *while inside it*: in a dungeon
+Refine **shifts** the inset rather than re-fitting it (the scale is already known and
+isn't in question), so you can just drag yourself into place.
+
+Two dungeons have no entrance in mapgenie's data at all — **Vernworth - Southern
+Ruins** and **Sealed Mining Shaft** — so they need `Insert` and a manual calibration.
+
+### When it guesses wrong
+
+Detection keys off the doorway, which can't catch everything: brushing past a cave
+mouth may flip the map, and you can drop through a hole to the floor below without ever
+touching a portal. So the override is a real control, not a fallback:
+
+- `Insert` — force in / out
+- `PageUp` / `PageDown` — force a floor change
+
+Tuning lives in `config/overlay.json`: `enterRadius` (how close to a doorway counts as
+going through it, default 10 game units), `rearmRadius` (how far clear you must get
+before it can fire again, 30), and `outsideDwellTicks` (how long you must map outside a
+dungeon's own panel before the app decides you left without using the door, 20 ticks
+≈ 0.7s).
 
 ## Building a portable .exe
 

@@ -28,6 +28,7 @@
       "config/dd2.offsets.json",
       "config/calibration.json",
       "config/overlay.json",
+      "config/areas.json",
       "package.json"
     ],
     "asarUnpack": [
