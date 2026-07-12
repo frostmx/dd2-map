@@ -6,8 +6,7 @@
     - When the game's movement code writes to it, captures the instruction,
       all registers, and works out which [register + offset] points at the
       target — i.e. the struct base pointer and the final offset of the chain.
-    - Appends the findings to  %USERPROFILE%\dd2-map\ce_out.txt  (which the
-      assistant reads back).
+    - Appends the findings to  %TEMP%\dd2_ce_out.txt  (override with outPath below).
 
   How to run:
     1. In Cheat Engine, attach to DD2.exe (Process list -> DD2.exe).
@@ -16,14 +15,16 @@
        0x47A55E10 no longer shows a sane value. Any one of x/height/y works.)
     3. Table menu -> "Show Cheat Table Lua Script" -> paste this -> Execute.
     4. Move your character for a few seconds so the write fires.
-    5. Tell the assistant; it reads ce_out.txt.
+    5. Read the captured base pointer + offset out of the output file.
 
   After we have the base pointer + offset, you pointer-scan the BASE POINTER
   (or the target) in CE's GUI scanner to get the static path.
 ]]
 
 local target = 0x4889D4E0          -- <<< EDIT to a current valid position address
-local outPath = [[%USERPROFILE%\dd2-map\ce_out.txt]]
+-- CE's working directory is wherever the CE executable lives, so a relative path
+-- would land somewhere unhelpful. %TEMP% is a stable, machine-independent spot.
+local outPath = os.getenv("TEMP") .. [[\dd2_ce_out.txt]]
 local maxCaptures = 6
 
 -- Attach if not already attached.
