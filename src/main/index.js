@@ -182,7 +182,15 @@ function absorbAnchor() {
   };
   areaStore.save(areas);
   pushAreas();
-  console.log(`[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing`);
+  // The closest approach is the number that matters, and it is NOT the distance the
+  // doorway fired at — that one is always just under enterRadius by construction (the
+  // rule triggers on the tick you cross into the radius), so it says nothing about
+  // how near the doorway you really got. This is what sets how far off the auto
+  // placement starts, and therefore how big a Refine shift you'd have to make.
+  console.log(
+    `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
+    `(closest approach to the doorway: ${anchor.dist.toFixed(1)}u)`,
+  );
 }
 
 // Both the main window and the overlay run the same follow loop off this feed.
@@ -596,8 +604,18 @@ ipcMain.handle('calibration:save', (_event, data) => {
 // The portal graph, extracted from the mapgenie guest by the control window (see
 // mapAgent.buildExtractAreas). Cached so the overlay never has to re-derive it and
 // a mapgenie outage can't take the feature down with it.
+// The control window re-extracts on every guest dom-ready, and the mapgenie SPA
+// navigates on its own, so this arrives repeatedly (measured: 4 times in one session,
+// unprompted). The graph is identical every time, and it's ~300KB — so re-parsing and
+// rewriting it on each one is pure waste. Only act when it actually changed.
+let areaMetaFingerprint = null;
+
 ipcMain.handle('areas:metadata', (_event, meta) => {
   if (!meta || !Array.isArray(meta.portals)) return false;
+  const fingerprint = `${meta.portals.length}|${Object.keys(meta.subregions || {}).length}|${meta.locationCount}`;
+  if (fingerprint === areaMetaFingerprint) return true;
+  areaMetaFingerprint = fingerprint;
+
   configStore.save('mapgenie-areas', meta);
   areaMeta = meta;
   tracker.setMetadata(meta);

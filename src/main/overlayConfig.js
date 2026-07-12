@@ -22,15 +22,18 @@ const DEFAULTS = {
   // Game units, for the doorway detector (src/main/areaTracker.js). enterRadius has
   // to absorb the world affine's own fit error too, since the doorways' game coords
   // are derived from it — so it is a knob, not a constant.
-  //
-  // 10 was too tight: measured live, three consecutive crossings of the same cave
-  // fired at 9.9, 9.9 and 10.0 units — i.e. the player's real path never comes closer
-  // than ~10u to where we compute the doorway, so detection was scraping its own
-  // threshold and a slightly wider approach would have missed the entrance outright.
-  // 15 gives that a 50% margin while staying tight enough not to fire when you merely
-  // run past a cave mouth.
   enterRadius: 15,
-  rearmRadius: 40,
+
+  // How far clear of a doorway you must get before it can fire again.
+  //
+  // Must stay just above enterRadius. Its ONLY job is to stop a single crossing
+  // firing over and over while you stand in the doorway — and that job is done the
+  // moment you are outside enterRadius at all. Anything larger breaks re-entry:
+  // measured live at 40, walking out of a cave and turning straight back around did
+  // NOTHING, because you rarely get 40 units clear of a cave mouth before going back
+  // in, so the doorway stayed latched off and the map ignored you. (Cost two forced
+  // Inserts before the log showed why.)
+  rearmRadius: 20,
   // How long (in 30Hz ticks) you must map outside a dungeon's own inset panel before
   // the app concludes you left it without using the doorway. The doorway rule alone
   // misses a wide exit path; this is the backstop.

@@ -247,6 +247,11 @@ function createTracker() {
   return {
     setConfig(next) {
       cfg = { ...DEFAULTS, ...(next || {}) };
+      // rearmRadius <= enterRadius would latch the doorway off forever (you can never
+      // be far enough to re-arm while still being close enough to fire), and a large
+      // one breaks re-entry into a cave you just left. Keep it just outside.
+      const floor = cfg.enterRadius + 5;
+      if (!(cfg.rearmRadius > cfg.enterRadius)) cfg.rearmRadius = floor;
     },
     setMetadata(next) {
       meta = next;
