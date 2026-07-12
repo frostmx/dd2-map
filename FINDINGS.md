@@ -526,6 +526,42 @@ would let a world Refine clobber every dungeon you'd calibrated, or vice versa.
 `config/mapgenie-areas.json` is a derived cache of the extracted graph (gitignored;
 re-extracted on every launch).
 
+### Not done yet (dungeons)
+
+**1. Transit detector: fire on passing THROUGH a doorway, not on nearing it.**
+The doorway currently fires on **proximity** — cross into `enterRadius` and it flips.
+That's why brushing past a cave mouth can flip the map, and it's the only reason
+`rearmMargin` + `rearmDwellTicks` exist: they're there to stop idling near an entrance
+from strobing, and getting them right took three tries (a big distance broke re-entry;
+a bare dwell strobed; see the tuning history in the git log).
+
+Track the **radial direction** to the nearest doorway instead — distance decreasing,
+then increasing, means you actually went *through* it. Then:
+- walk up to a cave mouth and turn back → no flip (you never passed through)
+- run tangentially past an entrance → no flip
+- idle around the doorway → no flip, with no band or dwell needed at all
+
+It would **delete both tuned constants**, replacing them with one physical fact, and it
+composes with the anchor, which is already captured at closest approach — the same
+moment the transit detector cares about. Cost: the flip lands a fraction of a second
+later, as you emerge rather than as you enter.
+
+**2. The inset scale is derived, not measured: 1.92, ±5%.**
+Good enough to play with (the containment backstop never misfired, and the free anchors
+land a few units out), but if the true value is 2.0 the marker drifts ~4 game units per
+100 walked from an entrance, and the zoom offset is off by a few percent with it.
+
+The data can't do better: the noise floor is the ~20-unit door-vs-arrival offset, and
+the estimators disagree systematically (least-squares 1.86 — a projection, so rotation
+noise drags it down; median-of-ratios 1.92–1.97 — magnitudes, which noise inflates).
+
+**Settling it takes one 3-point calibration inside any dungeon**, spread as wide as the
+place allows. It reports `measured X vs derived 1.92`, overrides the derivation, and
+applies to all 72 dungeons permanently. Until someone does it, the derived value stands.
+
+**3. Two dungeons have no entrance in mapgenie's data at all** — *Vernworth - Southern
+Ruins* and *Sealed Mining Shaft*. They need `Insert` plus a manual calibration.
+
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
    jump (height up/down) + movement (changed) filters. Tools: `tools/scanner.js`
