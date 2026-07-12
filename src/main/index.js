@@ -1,0 +1,520 @@
+const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
+const path = require('node:path');
+const fs = require('node:fs');
+const { findProcessIdByName, findModuleBase, openProcess, readMemory, resolvePointerChain, closeHandle } = require('./memoryReader');
+const overlayWindow = require('./overlayWindow');
+const overlayConfig = require('./overlayConfig');
+const win32Input = require('./win32Input');
+
+// Must run before app.whenReady(): the overlay is never the focused window, and
+// without these Chromium throttles its timers/rAF to ~1fps and the marker
+// freezes. See overlayWindow.js.
+overlayWindow.applyThrottlingSwitches();
+
+// Dev-only hot reload: reloads the window when a renderer file changes and
+// relaunches the app when a main-process file changes. Never active in a
+// packaged build; wrapped so a missing dependency can't break startup.
+if (!app.isPackaged) {
+  try {
+    // Ignore everything under config/ — it holds runtime state we write
+    // ourselves (calibration, saved zoom). Without this, saving the zoom on
+    // every change would reload the app each time you zoom. Regex matches the
+    // config path segment on both slash styles, absolute or relative.
+    require('electron-reloader')(module, { ignore: [/[\/\\]config[\/\\]/] });
+  } catch { /* electron-reloader not installed — run without hot reload */ }
+}
+
+const CALIBRATION_PATH = path.join(__dirname, '..', '..', 'config', 'calibration.json');
+const VIEW_PATH = path.join(__dirname, '..', '..', 'config', 'view.json');
+
+// ABSOLUTE world position. DD2 uses a floating origin, so the player's raw
+// ("local") coordinates re-center at streaming-cell boundaries. But the game
+// also keeps the true absolute position live in memory (global = local + k*128).
+// These pointer chains reach that global Vec3 (X @ +0, Y @ +8); the middle
+// field @ +4 is not on the 128-grid and is ignored. Found via a Node/CE pointer
+// scan and validated across TELEPORT + reload + a full game restart (ASLR), so
+// they are module-relative and permanently stable. See config/dd2.offsets.json
+// and global.chains2.json. Reading global directly means NO dead reckoning, no
+// drift, and fast-travel/teleport just works.
+//
+// NOTE: an earlier chain (0BB0E1D0) survived reload/restart but read garbage
+// after a teleport until the in-game map repopulated it — it threaded a
+// map-owned copy. These chains reach the gameplay-live copy, which stays valid.
+const GLOBAL_STATIC_OFFSET = 0x0fd26358n;
+const GLOBAL_OFFSETS = [0x1a8, 0x410];
+// Fallback chain on a DIFFERENT static base/structure (also teleport+restart
+// stable) — used if the primary ever fails or reads an inconsistent value.
+const GLOBAL_FALLBACK_STATIC_OFFSET = 0x0f8e1130n;
+const GLOBAL_FALLBACK_OFFSETS = [0x210, 0x50];
+const GLOBAL_X_OFFSET = 0x0n;
+const GLOBAL_Y_OFFSET = 0x8n;
+
+// Module-static mirror of the LOCAL (cell-relative) position: X @ +0, height @
+// +4, Y @ +8. No pointer chain needed. Used for the on-screen height readout and
+// as a sanity reference (global - local must be an exact multiple of 128).
+const LOCAL_MIRROR_OFFSET = 0x0fa65f70n;
+const CELL = 128;
+
+const CALIB_PREFIX = '__DD2_CALIB__';
+const FOUND_PREFIX = '__DD2_FOUND__';
+
+// The two mapgenie webviews are separate SPA instances: each reads the found-set
+// from the server only on load, so a mark in one was invisible to the other until
+// a reload. These hold the two guest webContents so a mark can be mirrored across
+// live (see mapAgent.js's found-sync).
+let mainGuest = null;
+let overlayGuest = null;
+
+// A mark happened in one window — replay the (plain, non-networking) Redux action
+// in the other, so its store and its map both catch up.
+function mirrorFoundAction(fromGuest, json) {
+  const target = fromGuest === mainGuest ? overlayGuest : mainGuest;
+  if (!target || target.isDestroyed()) return;
+  target.executeJavaScript(
+    `window.__dd2_apply_found_action && window.__dd2_apply_found_action(${json})`
+  ).catch(() => { /* guest reloading; it'll read the fresh set from the server anyway */ });
+}
+
+let mainWindow;
+let readerHandle = null;
+let moduleBase = null;
+let pollTimer = null;
+
+let cfg = null;              // config/overlay.json, with defaults filled in
+let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
+let inputTimer = null;
+let altDown = false;         // last observed Alt state, for edge detection
+let baseMapVisible = true;   // F9 toggles this (false = icons-only)
+let priorForeground = null;  // whose focus we stole, if focusable:true is in use
+
+// A resolved global read is trustworthy only if it sits on the 128-grid relative
+// to the local mirror (rejects a transiently-bad pointer resolution).
+function consistentWithLocal(global, local) {
+  const k = (global - local) / CELL;
+  return Number.isFinite(global) && Math.abs(k - Math.round(k)) < 0.05;
+}
+
+function loadCalibration() {
+  try {
+    return JSON.parse(fs.readFileSync(CALIBRATION_PATH, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveCalibration(data) {
+  fs.mkdirSync(path.dirname(CALIBRATION_PATH), { recursive: true });
+  fs.writeFileSync(CALIBRATION_PATH, JSON.stringify(data, null, 2));
+}
+
+// Persisted view preferences (currently just the default zoom level).
+function loadView() {
+  try {
+    return JSON.parse(fs.readFileSync(VIEW_PATH, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveView(data) {
+  fs.mkdirSync(path.dirname(VIEW_PATH), { recursive: true });
+  fs.writeFileSync(VIEW_PATH, JSON.stringify(data, null, 2));
+}
+
+// Both the main window and the overlay run the same follow loop off this feed.
+function broadcast(channel, payload) {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue;
+    // On teardown the render frame is disposed before the window reports
+    // destroyed, and it can be disposed between this check and the send — so
+    // guard AND catch. (Only reachable when the process is killed outright;
+    // a normal quit clears the poll timers first, via before-quit.)
+    const wc = win.webContents;
+    if (!wc || wc.isDestroyed()) continue;
+    try {
+      wc.send(channel, payload);
+    } catch { /* frame went away mid-send */ }
+  }
+}
+
+function startMemoryPolling() {
+  pollTimer = setInterval(() => {
+    try {
+      if (!readerHandle) {
+        const pid = findProcessIdByName('DD2.exe');
+        if (!pid) return;
+        readerHandle = openProcess(pid);
+        moduleBase = BigInt(findModuleBase(pid, 'DD2.exe').base);
+        gamePid = pid; // the overlay's focus-follow compares against this
+      }
+
+      // Local mirror (static): X/height/Y at +0/+4/+8. Used for the height
+      // readout and to sanity-check the global read.
+      const mirror = readMemory(readerHandle, moduleBase + LOCAL_MIRROR_OFFSET, 12);
+      const localX = mirror.readFloatLE(0);
+      const height = mirror.readFloatLE(4);
+      const localY = mirror.readFloatLE(8);
+
+      // Absolute world position via the stable global chain, with a fallback.
+      const readGlobal = (staticOff, offs) => {
+        const addr = resolvePointerChain(readerHandle, moduleBase + staticOff, offs);
+        const buf = readMemory(readerHandle, addr, 12);
+        return { x: buf.readFloatLE(0), y: buf.readFloatLE(8) };
+      };
+      let g = null;
+      try {
+        const primary = readGlobal(GLOBAL_STATIC_OFFSET, GLOBAL_OFFSETS);
+        if (consistentWithLocal(primary.x, localX) && consistentWithLocal(primary.y, localY)) g = primary;
+      } catch { /* fall through to fallback */ }
+      if (!g) {
+        const fb = readGlobal(GLOBAL_FALLBACK_STATIC_OFFSET, GLOBAL_FALLBACK_OFFSETS);
+        if (consistentWithLocal(fb.x, localX) && consistentWithLocal(fb.y, localY)) g = fb;
+      }
+      if (!g) return; // both unresolved this tick (e.g. mid-load); skip, keep handle
+
+      broadcast('game-position', { x: g.x, y: g.y, height, localX, localY });
+    } catch (err) {
+      // DD2.exe likely closed or the chain didn't resolve this tick — drop the
+      // handle and retry next tick.
+      if (readerHandle) {
+        closeHandle(readerHandle);
+        readerHandle = null;
+        moduleBase = null;
+        gamePid = null;
+      }
+    }
+  }, 33); // ~30Hz — finer target updates for the renderer's 60fps follow smoothing
+}
+
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1280,
+    height: 800,
+    title: 'DD2 Map',
+    webPreferences: {
+      preload: path.join(__dirname, '..', 'renderer', 'preload.js'),
+      webviewTag: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
+
+  // The overlay is a window too, so it would keep the app alive on its own after
+  // you close this one — and it's hidden and frameless, so you'd have no way to
+  // get rid of it. Closing the control window quits everything.
+  mainWindow.on('closed', () => app.quit());
+
+  mainWindow.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    console.log(`[host console] ${message} (${sourceId}:${line})`);
+  });
+
+  mainWindow.webContents.on('did-attach-webview', (_e, webContents) => {
+    // The <webview> tag attaches its own internal loading-state listeners
+    // (did-stop-loading etc.) as the mapgenie SPA navigates; raise the cap so
+    // Electron doesn't warn about a leak that isn't one of ours.
+    webContents.setMaxListeners(30);
+    mainGuest = webContents;
+    webContents.on('console-message', (_e2, level, message, line, sourceId) => {
+      if (message.startsWith(FOUND_PREFIX)) {
+        mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
+        return;
+      }
+      if (message.startsWith(CALIB_PREFIX)) {
+        try {
+          const data = JSON.parse(message.slice(CALIB_PREFIX.length));
+          mainWindow.webContents.send('calibration-click-result', data);
+        } catch {
+          // ignore malformed bridge message
+        }
+        return;
+      }
+      console.log(`[webview console] ${message} (${sourceId}:${line})`);
+    });
+    webContents.on('preload-error', (_e2, preloadPath, error) => {
+      console.log(`[webview preload-error] ${preloadPath}: ${error}`);
+    });
+    // Injects a click-capture listener into the guest's own main-world JS
+    // context (via executeJavaScript, which reliably sees the real Mapbox
+    // instance — unlike a <webview> preload script, which in this Electron
+    // version does not actually share window.map with the page even under
+    // contextIsolation=no; see M3 debugging notes). Bridges back to the host
+    // via a console.log with a special prefix, since page-world script has
+    // no ipcRenderer access.
+    webContents.on('dom-ready', () => {
+      webContents.executeJavaScript(`
+        (function() {
+          if (window.__dd2_click_hook_installed__) return;
+          window.__dd2_click_hook_installed__ = true;
+          window.__dd2_calibration_mode__ = false;
+
+          var tooltip = document.createElement('div');
+          tooltip.style.cssText = 'position:fixed;pointer-events:none;z-index:99999;background:rgba(0,0,0,0.8);color:#fff;padding:3px 6px;border-radius:4px;font:11px monospace;transform:translate(12px, 12px);display:none;';
+          document.body.appendChild(tooltip);
+
+          Object.defineProperty(window, '__dd2_set_calibration_mode__', {
+            value: function(active) {
+              window.__dd2_calibration_mode__ = active;
+              document.body.style.cursor = active ? 'crosshair' : '';
+              tooltip.style.display = active ? 'block' : 'none';
+            },
+            configurable: true,
+          });
+          Object.defineProperty(window, '__dd2_clear_calib_pins__', {
+            value: function() {
+              document.querySelectorAll('.__dd2_calib_pin__').forEach(function(el) { el.remove(); });
+            },
+            configurable: true,
+          });
+
+          document.addEventListener('mousemove', function(e) {
+            if (!window.__dd2_calibration_mode__) return;
+            tooltip.style.left = e.clientX + 'px';
+            tooltip.style.top = e.clientY + 'px';
+            if (!window.map || typeof window.map.unproject !== 'function') {
+              tooltip.textContent = 'map loading...';
+              return;
+            }
+            var ll = window.map.unproject([e.clientX, e.clientY]);
+            tooltip.textContent = ll.lng.toFixed(4) + ', ' + ll.lat.toFixed(4);
+          });
+
+          document.addEventListener('click', function(e) {
+            if (!window.__dd2_calibration_mode__) return;
+            if (!window.map || typeof window.map.unproject !== 'function') {
+              console.log('${CALIB_PREFIX}' + JSON.stringify({ notReady: true }));
+              return;
+            }
+            e.preventDefault();
+            e.stopPropagation();
+            const lngLat = window.map.unproject([e.clientX, e.clientY]);
+
+            var pin = document.createElement('div');
+            pin.className = '__dd2_calib_pin__';
+            pin.dataset.lng = lngLat.lng;
+            pin.dataset.lat = lngLat.lat;
+            pin.style.cssText = 'position:absolute;width:10px;height:10px;border-radius:50%;background:#2ecc71;border:2px solid white;box-shadow:0 0 4px rgba(0,0,0,0.7);z-index:99998;transform:translate(-50%,-50%);pointer-events:none;';
+            document.body.appendChild(pin);
+            var pinPos = window.map.project(lngLat);
+            pin.style.left = pinPos.x + 'px';
+            pin.style.top = pinPos.y + 'px';
+
+            if (!window.__dd2_pin_move_hooked__) {
+              window.__dd2_pin_move_hooked__ = true;
+              window.map.on('move', function() {
+                document.querySelectorAll('.__dd2_calib_pin__').forEach(function(p) {
+                  var pp = window.map.project({ lng: parseFloat(p.dataset.lng), lat: parseFloat(p.dataset.lat) });
+                  p.style.left = pp.x + 'px';
+                  p.style.top = pp.y + 'px';
+                });
+              });
+            }
+
+            console.log('${CALIB_PREFIX}' + JSON.stringify({ lng: lngLat.lng, lat: lngLat.lat }));
+          }, true);
+        })();
+      `).catch((err) => console.log('[inject click hook error]', err));
+    });
+  });
+}
+
+// --- Overlay -----------------------------------------------------------------
+
+function createOverlay() {
+  const overlay = overlayWindow.create(cfg);
+
+  overlay.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    console.log(`[overlay] ${message} (${sourceId}:${line})`);
+  });
+  overlay.webContents.on('did-attach-webview', (_e, webContents) => {
+    webContents.setMaxListeners(30);
+    overlayGuest = webContents;
+    webContents.on('console-message', (_e2, level, message) => {
+      if (message.startsWith(FOUND_PREFIX)) {
+        mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
+        return;
+      }
+      console.log(`[overlay webview] ${message}`);
+    });
+  });
+}
+
+
+function registerHotkeys() {
+  const bind = (accelerator, label, handler) => {
+    if (!accelerator) return;
+    // A silently dead hotkey is the worst failure mode here — you'd be pressing
+    // a key and getting nothing, with no clue why. Say so.
+    const ok = globalShortcut.register(accelerator, handler);
+    if (!ok) {
+      console.log(`[overlay] FAILED to register ${accelerator} (${label}) — another app likely owns it. Change it in config/overlay.json.`);
+    } else {
+      console.log(`[overlay] ${accelerator} → ${label}`);
+    }
+  };
+
+  bind(cfg.hotkeys.toggle, 'overlay on/off', () => {
+    const enabled = overlayWindow.toggle();
+    if (cfg.hideMainWindowWithOverlay && mainWindow && !mainWindow.isDestroyed()) {
+      if (enabled) mainWindow.hide(); else mainWindow.show();
+    }
+  });
+
+  bind(cfg.hotkeys.baseMap, 'base map on/off (icons-only)', () => {
+    baseMapVisible = !baseMapVisible;
+    overlayWindow.send('overlay:basemap', baseMapVisible);
+  });
+
+  bind(cfg.hotkeys.zoomOut, 'zoom out', () => {
+    overlayWindow.send('overlay:zoom-delta', -cfg.zoomStep);
+  });
+
+  bind(cfg.hotkeys.zoomIn, 'zoom in', () => {
+    overlayWindow.send('overlay:zoom-delta', cfg.zoomStep);
+  });
+}
+
+// Alt-hold (mouse capture) and game-focus follow. Both have to be POLLED:
+// globalShortcut only ever fires on key press, so it cannot tell us when Alt is
+// released, and there's no event for "the foreground window changed".
+function startInputPolling() {
+  inputTimer = setInterval(() => {
+    try {
+      const alt = win32Input.isAltDown();
+
+      // Edge, not level: only act when Alt actually changes state.
+      if (alt !== altDown) {
+        altDown = alt;
+        overlayWindow.setInteractive(alt);
+        overlayWindow.send('overlay:interactive', alt);
+
+        // DD2 pins the cursor to screen centre with ClipCursor and only lets go
+        // when it loses focus, so a merely click-receiving overlay isn't enough —
+        // the cursor stays stuck at centre and clicks land nowhere. Alt has to
+        // genuinely ACTIVATE the overlay. Electron's focus() can't do it on its
+        // own: Windows denies SetForegroundWindow to a process that didn't get the
+        // last input event (DD2 did), so the call is silently ignored. Hence
+        // forceForeground, which lifts that restriction via AttachThreadInput.
+        if (cfg.focusable !== false && overlayWindow.isEnabled()) {
+          if (alt) {
+            priorForeground = win32Input.foregroundWindow();
+            overlayWindow.focus();
+            win32Input.forceForeground(overlayWindow.getHwnd());
+          } else if (priorForeground) {
+            win32Input.forceForeground(priorForeground);
+            priorForeground = null;
+          }
+        }
+      }
+
+      // Held, not just on the edge: DD2 re-applies its ClipCursor every frame for
+      // as long as it thinks it owns the mouse, so clearing it once on Alt-down
+      // doesn't stick. The clip is system-wide state, so we can just keep clearing
+      // it while Alt is held.
+      if (alt && cfg.focusable !== false && overlayWindow.isEnabled()) {
+        win32Input.releaseCursorClip();
+      }
+
+      if (!cfg.hideWhenGameUnfocused || !overlayWindow.isEnabled()) return;
+
+      const fg = win32Input.foregroundProcessId();
+      const ourWindowIsUp = fg === process.pid;  // any of our own windows
+      const gameIsUp = gamePid != null && fg === gamePid;
+
+      // Never hide while Alt is held or while one of our windows has focus — an
+      // Alt-click on the overlay would otherwise make it vanish under the cursor.
+      if (gameIsUp || ourWindowIsUp || alt) overlayWindow.show();
+      else overlayWindow.hide();
+    } catch {
+      // A transient user32 failure shouldn't kill the loop.
+    }
+  }, 50);
+}
+
+// Live numeric knobs from the control window's sliders: push to the overlay
+// immediately so you can see it change, but only write to disk once the drag
+// settles.
+const NUMBER_KEYS = ['mapOpacity', 'iconOpacity', 'mapBrightness', 'iconBrightness'];
+let numberSaveTimer = null;
+ipcMain.on('overlay:number', (_event, { key, value }) => {
+  if (!NUMBER_KEYS.includes(key)) return;
+  const v = Math.min(1, Math.max(0.05, Number(value)));
+  if (!Number.isFinite(v)) return;
+  cfg[key] = v;
+  overlayWindow.send('overlay:number', { key, value: v });
+  clearTimeout(numberSaveTimer);
+  numberSaveTimer = setTimeout(() => overlayConfig.save(cfg), 500);
+});
+
+// Boolean overlay settings toggled from the control window.
+const SETTING_KEYS = ['autoZoom', 'hideFound'];
+ipcMain.on('overlay:setting', (_event, { key, value }) => {
+  if (!SETTING_KEYS.includes(key)) return;
+  cfg[key] = !!value;
+  overlayWindow.send('overlay:setting', { key, value: !!value });
+  overlayConfig.save(cfg);
+});
+
+ipcMain.handle('overlay:config:load', () => cfg);
+ipcMain.handle('overlay:config:save', (_event, data) => {
+  cfg = { ...cfg, ...data };
+  overlayConfig.save(cfg);
+  return true;
+});
+
+ipcMain.on('overlay:probe', (_event, info) => {
+  console.log(
+    `[overlay] map probe: canvas alpha=${info.alpha}, zoom=${info.zoom?.toFixed?.(2)} ` +
+    `(range ${info.minZoom}–${info.maxZoom}), ${info.layerCount} layers (${info.symbolLayers} symbol)`
+  );
+  if (info.alpha === false) {
+    console.log(
+      '[overlay] WARNING: map canvas has alpha=false — icons-only mode (the base-map ' +
+      'hotkey) cannot be transparent by hiding layers. See FINDINGS.md "Overlay".'
+    );
+  }
+});
+
+ipcMain.handle('calibration:load', () => loadCalibration());
+ipcMain.handle('calibration:save', (_event, data) => {
+  saveCalibration(data);
+  return true;
+});
+ipcMain.handle('view:load', () => loadView());
+ipcMain.handle('view:save', (_event, data) => {
+  saveView(data);
+  return true;
+});
+
+app.whenReady().then(() => {
+  cfg = overlayConfig.load();
+  createWindow();
+  createOverlay();
+  registerHotkeys();
+  startMemoryPolling();
+  startInputPolling();
+
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+});
+
+// Stop the polls before the windows come down, so neither loop fires into a
+// half-disposed frame on the way out.
+app.on('before-quit', () => {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
+});
+
+app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
+  if (readerHandle) { closeHandle(readerHandle); readerHandle = null; }
+});
+
+app.on('window-all-closed', () => {
+  if (pollTimer) clearInterval(pollTimer);
+  if (inputTimer) clearInterval(inputTimer);
+  if (readerHandle) closeHandle(readerHandle);
+  if (process.platform !== 'darwin') app.quit();
+});

@@ -1,0 +1,69 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DD2 Map</title>
+  <style>
+    html, body { margin: 0; padding: 0; height: 100%; overflow: hidden; background: #111; font-family: sans-serif; }
+    webview { display: inline-flex; width: 100%; height: 100%; border: none; }
+    #calibrationPanel {
+      position: fixed; top: 8px; left: 58px; z-index: 10;
+      background: rgba(20,20,20,0.85); color: #eee; padding: 10px 12px;
+      border-radius: 8px; font-size: 13px; max-width: 320px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+    }
+    #calibrationPanel.active { outline: 2px solid #ff3b30; }
+    #calibrationPanel button { margin-right: 6px; margin-top: 6px; }
+    #calibrationStatus { margin-top: 6px; opacity: 0.9; }
+    #coords {
+      margin-top: 8px; font-family: monospace; font-size: 12px;
+      color: #7fd1ff; white-space: pre;
+    }
+  </style>
+</head>
+<body>
+  <div id="calibrationPanel">
+    <div><strong>DD2 Map</strong></div>
+    <button id="toggleCalibrationBtn">Start Calibration</button>
+    <button id="nextPointBtn" disabled>Next Point</button>
+    <button id="resetCalibrationBtn">Reset</button>
+    <button id="refineBtn" disabled>Refine</button>
+    <button id="debugMarkerBtn">Debug: Marker Info</button>
+    <button id="debugStyleBtn">Debug: Map Style</button>
+    <div style="margin-top:6px;"><label><input type="checkbox" id="followChk" checked /> Follow player (pan map)</label></div>
+    <div style="margin-top:8px;">
+      <label><input type="checkbox" id="autoZoom" /> Auto-zoom overlay (out while running)</label>
+      <br />
+      <label><input type="checkbox" id="hideFound" /> Hide found POIs in overlay</label>
+    </div>
+    <div style="margin-top:8px;">
+      <div><strong>Overlay — full map (F9 on)</strong></div>
+      <label for="mapOpacity">Opacity <span id="mapOpacityValue">—</span></label>
+      <input type="range" id="mapOpacity" min="0.1" max="1" step="0.02" style="width:100%;" />
+      <label for="mapBrightness">Brightness <span id="mapBrightnessValue">—</span></label>
+      <input type="range" id="mapBrightness" min="0.05" max="1" step="0.02" style="width:100%;" />
+    </div>
+    <div style="margin-top:8px;">
+      <div><strong>Overlay — icons only (F9 off)</strong></div>
+      <label for="iconOpacity">Opacity <span id="iconOpacityValue">—</span></label>
+      <input type="range" id="iconOpacity" min="0.1" max="1" step="0.02" style="width:100%;" />
+      <label for="iconBrightness">Brightness <span id="iconBrightnessValue">—</span></label>
+      <input type="range" id="iconBrightness" min="0.05" max="1" step="0.02" style="width:100%;" />
+    </div>
+    <div style="opacity:0.7;font-size:11px;margin-top:2px;">
+      Low brightness = darkens the game instead of washing it white.
+    </div>
+    <div id="coords">Waiting for DD2…</div>
+    <div id="calibrationStatus">Idle.</div>
+  </div>
+  <webview
+    id="mapView"
+    src="https://mapgenie.io/dragons-dogma-2/maps/world?embed=light"
+    allowpopups
+  ></webview>
+  <!-- Shared with the overlay window; must load before renderer.js, which uses them. -->
+  <script src="calibration.js"></script>
+  <script src="mapAgent.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "dd2-map",
+  "version": "0.1.0",
+  "description": "Personal live map overlay for Dragon's Dogma 2 (mapgenie.io embed + memory-read player position)",
+  "main": "src/main/index.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-reloader": "^1.2.3"
+  },
+  "allowScripts": {
+    "electron@33.4.11": true,
+    "koffi@3.1.1": true
+  },
+  "dependencies": {
+    "koffi": "^3.1.1"
+  }
+}

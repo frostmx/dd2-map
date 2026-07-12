@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>DD2 Map Overlay</title>
+  <style>
+    /* Transparent all the way down: the window is transparent, so any opaque
+       background here would paint over the game instead of the game showing
+       through. */
+    html, body {
+      margin: 0; padding: 0; height: 100%;
+      overflow: hidden;
+      background: transparent;
+    }
+    webview {
+      display: inline-flex; width: 100%; height: 100%; border: none;
+      background: transparent;
+    }
+
+    /* Alt-held cue: the overlay is holding the mouse right now, so clicks are
+       NOT reaching the game. Without this it's invisible state. */
+    #interactiveCue {
+      position: fixed; inset: 0; z-index: 10;
+      pointer-events: none;
+      border: 2px solid #7fd1ff;
+      box-shadow: inset 0 0 12px rgba(127, 209, 255, 0.35);
+      opacity: 0;
+      transition: opacity 90ms ease-out;
+    }
+    body.interactive #interactiveCue { opacity: 1; }
+  </style>
+</head>
+<body>
+  <!-- No buttons, no readouts, no panel: just the mapgenie layer and the player
+       marker. backgroundThrottling=no is load-bearing — the 60fps follow loop
+       runs inside this guest, and the overlay is never the focused window, so
+       Chromium would otherwise throttle it to ~1fps and freeze the marker. -->
+  <webview
+    id="mapView"
+    src="https://mapgenie.io/dragons-dogma-2/maps/world?embed=light"
+    webpreferences="backgroundThrottling=no"
+    allowpopups
+  ></webview>
+  <div id="interactiveCue"></div>
+
+  <script src="calibration.js"></script>
+  <script src="mapAgent.js"></script>
+  <script src="overlay.js"></script>
+</body>
+</html>

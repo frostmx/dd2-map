@@ -1,0 +1,63 @@
+{
+  "note": "Session-only finding from live value scanning + user's manual Cheat Engine address list, cross-referenced with camera-rotation-invariance and jump-height discriminators. This is a raw process address, NOT yet a stable module-base+offset or AOB signature — it WILL change on game restart. Needs a pointer-scan pass to become restart-stable before shipping.",
+  "foundAt": "2026-07-10",
+  "processName": "DD2.exe",
+  "history": {
+    "wrongAddress_cameraPosition": "0x3b8c4c60 (struct base) - confirmed to track camera, not player, via camera-rotation test. Superseded.",
+    "correctAddress_playerPosition": "0x47a55e10 (struct base) - validated: (1) unchanged during camera-only rotation, (2) increases/decreases correctly with jump/landing on the height field, (3) both horizontal fields show large smooth movement-correlated changes while height stays flat during flat-ground walking."
+  },
+  "sessionOnlyAddress": {
+    "structBase": "0x47a55dd0",
+    "note": "Confirmed via CE 'find what writes': the writing code addresses this struct as [base + 0x40]. Base held in RBX/RCX. Position floats are at base+0x40/0x44/0x48. This base reallocates — needs a static pointer path (pointer scan targeting 0x47a55dd0).",
+    "fields": {
+      "x": { "offset": "0x40" },
+      "height": { "offset": "0x44", "note": "jump-validated, camera-rotation-invariant" },
+      "y": { "offset": "0x48" }
+    }
+  },
+  "writingInstruction": "near DD2.exe+0x54BB683 (RIP at post-write addss xmm3,xmm4; actual movss [rbx+40] just before)",
+  "persistentAnchor": "RSI = 0x1D4B83500 stayed byte-identical across the original capture, a save-reload, AND a full DD2 restart — a deterministic singleton (player manager?). Fallback anchor if the pointer chain ever breaks.",
+  "stablePointerChain": {
+    "note": "Found via CE pointer scan, narrowed through a full DD2 restart + 2 reloads (18 survivors), all validated live by testChains.js. Resolves to the struct base; position at base+0x40/0x44/0x48. CE offset order: deref [moduleBase+staticOffset], then apply offsets[0..n-1] each with a deref, add offsets[n] last without deref.",
+    "module": "DD2.exe",
+    "staticOffset": "0x0F8E4388",
+    "offsets": ["0x50", "0x20", "0x28", "0x70", "0x20", "0x0"],
+    "positionOffsets": { "x": "0x40", "height": "0x44", "y": "0x48" },
+    "backupChains": [
+      { "staticOffset": "0x0F8E9420", "offsets": ["0x48", "0x10", "0x20", "0x20", "0x70", "0x20", "0x0"] },
+      { "staticOffset": "0x0F8FD5B8", "offsets": ["0x1D8", "0x1A0", "0x18", "0x1B8", "0x150", "0x20", "0x0"] },
+      { "staticOffset": "0x0FE46548", "offsets": ["0x1D8", "0x1A0", "0x18", "0x1B8", "0x150", "0x20", "0x0"] }
+    ]
+  },
+  "staticLocalPosition": {
+    "note": "MODULE-STATIC copies of the player's LOCAL (cell-relative) position — no pointer chain needed. Layout is a Vec3: x@+0, h@+4, y@+8. These re-center to 0 (unlike the pointer-chain struct at +0x40, which carries a constant -8/-8 offset on x/y and -6.7 on h: static = chain + 8). Two verified mirrors, values identical.",
+    "module": "DD2.exe",
+    "mirrors": ["0x0FA65F70", "0x0FC26890"],
+    "fields": { "x": "+0x0", "height": "+0x4", "y": "+0x8" },
+    "notAMirror": "0x0F8FD268 — layout is [h, -x, y] (x is SIGN-FLIPPED). Different struct; do not read x from it."
+  },
+  "globalPosition": {
+    "note": "SOLVED 2026-07-11. The ABSOLUTE world position lives in memory as a Vec3 (X @ +0, Y @ +8; the +4 field is NOT on the 128-grid, ignore it). global = local + k*128. Reading it directly fully solves floating origin: no dead reckoning, zero drift, teleport-proof. WIRED INTO THE APP (src/main/index.js).",
+    "foundVia": "src/main/globalHunt.js identified the live global (lockstep filter d(global)==d(local) between crossings, then a boundary crossing separates global from local). Then a CE + Node pointer scan against a stable heap copy, narrowed across 3 reloads, validated by src/main/pointerScan.js.",
+    "fields": { "x": "+0x0", "y": "+0x8" },
+    "stableChain": {
+      "note": "PRIMARY (wired). Validated across TELEPORT + reload + full game restart (ASLR). Reaches the gameplay-live global copy. Offset order = CE display order = resolvePointerChain order.",
+      "module": "DD2.exe",
+      "staticOffset": "0x0FD26358",
+      "offsets": ["0x1A8", "0x410"],
+      "readOffsets": { "x": "0x0", "y": "0x8" }
+    },
+    "fallbackChain": {
+      "note": "On a DIFFERENT static base/structure; also teleport+restart stable. Used if primary fails/inconsistent on a tick.",
+      "staticOffset": "0x0F8E1130",
+      "offsets": ["0x210", "0x50"]
+    },
+    "teleportLesson": "An earlier chain (0BB0E1D0 -> [0x40,0x20,0x190,0x3F8,0x88,0x3E0]) survived reload/restart but read GARBAGE after a teleport until the in-game map was opened — it threaded a MAP-OWNED copy only refreshed when the map is up. Always test chains with a teleport WITHOUT opening the map; keep only ones that stay consistent (reach the gameplay-live copy).",
+    "candidateFiles": "global.chains2.json (teleport-robust set, wired), global.chains.json (earlier map-owned set)",
+    "notInPlayerStruct": "Separate allocation ~100MB from the local player struct; the global lives in its own object reached by the chain above."
+  },
+  "backupCandidate": {
+    "structBase": "0x3b8c4b10",
+    "note": "Also validated (camera-rotation-invariant, real X/Z movement tracking, height stays flat on flat ground) — likely another duplicate copy of the same player position. Not currently used; kept as a fallback if 0x47a55e10 stops resolving."
+  }
+}
