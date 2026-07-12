@@ -11,22 +11,38 @@ Plan file: `%USERPROFILE%\.claude\plans\gentle-inventing-quill.md`
 
 ```
 dd2-map/
-  src/main/
-    index.js         # Electron main: poll loop reads position via pointer chain,
-                     #   pushes {x,height,y} to renderer over IPC (~10Hz)
-    memoryReader.js  # koffi wrappers: OpenProcess/ReadProcessMemory,
-                     #   findModuleBase, resolvePointerChain, readPointer
-    (diagnostic scripts: scanner.js, ctLogger.js, findOrigin.js, testChains.js,
-     watch.js, globalWatch.js, ctSnapshot.js, readCtAddresses.js — RE tooling)
+  src/main/           # the app's main process — nothing else lives here
+    index.js          # poll loop (30Hz memory read -> IPC), hotkeys, Alt/foreground
+                      #   poll, found-mark bridge between the two windows
+    memoryReader.js   # koffi/kernel32: OpenProcess/ReadProcessMemory,
+                      #   findModuleBase, resolvePointerChain, readPointer
+    win32Input.js     # koffi/user32: Alt-hold, foreground forcing, ClipCursor release
+    overlayWindow.js  # the transparent, click-through, always-on-top overlay window
+    overlayConfig.js  # overlay settings + defaults
+    configStore.js    # config/<name>.json load/save
   src/renderer/
-    index.html       # window: <webview> loading mapgenie embed + calibration UI
-    renderer.js      # calibration flow, marker injection via webview.executeJavaScript
-    preload.js       # contextBridge: onGamePosition, load/saveCalibration, click bridge
+    index.html/.js    # control window: mapgenie <webview>, calibration, overlay settings
+    overlay.html/.js  # overlay: map + player marker only, no UI
+    mapAgent.js       # the script injected into the mapgenie guest (marker, follow,
+                      #   zoom, icons-only, hide-found, found-sync) — shared by both
+    calibration.js    # the world->map affine, shared by both
+    preload.js / overlayPreload.js   # contextBridges
   config/
-    dd2.offsets.json # THE memory findings (pointer chain, offsets, backups)
-    calibration.json # solved world->map transform (per-region; cleared on demand)
-  ce_find_pointer.lua# Cheat Engine Lua: "find what writes" -> capture struct base
+    dd2.offsets.json  # THE memory findings (pointer chains, offsets, backups)
+    calibration.json  # solved world->map affine
+    overlay.json      # overlay prefs (untracked: per-machine runtime state)
+  tools/              # RE tooling — how the offsets were FOUND. Not part of the app.
+    scanner.js, globalHunt.js, pointerScan.js, testChains.js, findOrigin.js,
+    findCellIndex.js, verifyCellIndex.js, watch.js, globalWatch.js, ctLogger.js,
+    ctSnapshot.js, readCtAddresses.js, readStatic.js, compareStatic.js,
+    analyzeRebase.js, probeMapLib.js, smokeTest.js
+    ce_find_pointer.lua       # Cheat Engine: "find what writes" -> struct base
+    global.chains{,2}.json    # the validated pointer chains these produced
 ```
+
+Run the tools from the repo root (`node tools/testChains.js`); they write their
+dumps and logs to the working directory, and those are gitignored — they're
+gigabytes and all reproducible.
 
 - No driver, no bridge service, no signing cost. One process.
 - Map: official mapgenie embed `?embed=light` via Electron `<webview>` (host-side
@@ -48,7 +64,7 @@ dd2-map/
 Raw addresses reallocate during play AND on restart — both the position struct and
 any origin values move. Solved via Cheat Engine pointer scan, narrowed through a
 full DD2 restart + 2 reloads (559330 -> 5047 -> 124 -> 18 survivors), all 18
-validated live by `testChains.js`.
+validated live by `tools/testChains.js`.
 
 **Primary chain** (`config/dd2.offsets.json`):
 ```
@@ -324,17 +340,17 @@ and we read it directly, so the origin churn never reaches the marker.
   better either, but here the teleport-robust chains happened to be the shortest.
 
 ### How it was found (reusable)
-1. `src/main/globalHunt.js` finds the live global address: filter memory to
+1. `tools/globalHunt.js` finds the live global address: filter memory to
    values that move in lockstep with the player between crossings
    (`d(global) == d(local)`), then a boundary crossing separates global (tracks
    the player's TRUE displacement) from local (snaps ~128 with the origin).
    121M candidates -> a handful of global copies.
-2. Pointer-scan a *stable* global copy (CE, or `src/main/pointerScan.js scan`).
+2. Pointer-scan a *stable* global copy (CE, or `tools/pointerScan.js scan`).
    Low-heap copies are transient (no stable path); pick one that survives a
    reload. Narrow the scan across reloads (`findglobal` to get the new address +
-   CE rescan, or `pointerScan.js validate`, which auto-identifies via the
+   CE rescan, or `tools/pointerScan.js validate`, which auto-identifies via the
    128-consistency test so it needs no manual re-targeting).
-3. `pointerScan.js validate global.chains.json` across a reload + a full restart
+3. `tools/pointerScan.js validate tools/global.chains.json` across a reload + a full restart
    keeps only permanently-stable chains. Shortest survivor wins.
 
 Note: raw heap addresses die on any reload/teleport — never hardcode one; a chain
@@ -361,15 +377,15 @@ An earlier version accumulated the 128 re-centers live (`world = accum + local`,
 detect a jump in band `64 < |Δ| < 400`, subtract the reset portion with an EMA
 velocity estimate) — sub-pixel drift, but per-session calibration and no
 fast-travel. Fully replaced by the global read above and removed from `index.js`.
-`globalHunt.js`/`scanner.js` retain the tooling if ever needed again.
+`tools/globalHunt.js` / `tools/scanner.js` retain the tooling if ever needed again.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
-   jump (height up/down) + movement (changed) filters. Tools: `scanner.js`
+   jump (height up/down) + movement (changed) filters. Tools: `tools/scanner.js`
    (snapshot/filter-changed/filter-unchanged/filter-direction/proximity/context).
-2. Confirm struct + get base: `ce_find_pointer.lua` in CE ("find what writes" ->
+2. Confirm struct + get base: `tools/ce_find_pointer.lua` in CE ("find what writes" ->
    captures base register + offset to `ce_out.txt`).
 3. Pointer-scan the base in CE GUI; narrow across a full restart + reloads (re-run
    the Lua after each to get the new base fast); validate survivors with
-   `testChains.js`.
+   `tools/testChains.js`.
 4. Wire into `index.js` via `resolvePointerChain`.

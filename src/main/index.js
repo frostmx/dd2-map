@@ -34,7 +34,7 @@ const VIEW_PATH = path.join(__dirname, '..', '..', 'config', 'view.json');
 // field @ +4 is not on the 128-grid and is ignored. Found via a Node/CE pointer
 // scan and validated across TELEPORT + reload + a full game restart (ASLR), so
 // they are module-relative and permanently stable. See config/dd2.offsets.json
-// and global.chains2.json. Reading global directly means NO dead reckoning, no
+// and tools/global.chains2.json. Reading global directly means NO dead reckoning, no
 // drift, and fast-travel/teleport just works.
 //
 // NOTE: an earlier chain (0BB0E1D0) survived reload/restart but read garbage

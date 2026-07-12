@@ -1,41 +1,27 @@
-# Allowlist, not a blocklist. The working directory also holds ~5 GB of
-# reverse-engineering byproducts (memory dumps, pointer-scan results, watch logs)
-# and the one-off RE scripts that produced them. Those are how the memory offsets
-# were FOUND, not part of the app — the findings themselves live in FINDINGS.md
-# and config/dd2.offsets.json, which is what actually matters.
-#
-# So: ignore everything, then re-include the app.
-# (Note: gitignore has no trailing comments — a '#' after a path is part of the
-# pattern, not a comment. Keep every comment on its own line.)
+node_modules/
 
-/*
-!.gitignore
-!package.json
-!package-lock.json
-!README.md
-!FINDINGS.md
-!src/
-!config/
+# Per-machine runtime state the app rewrites as you drag sliders and zoom. The
+# code carries working defaults (src/main/overlayConfig.js), so a fresh clone
+# runs without them. config/calibration.json and config/dd2.offsets.json ARE
+# tracked — those are hard-won and costly to reproduce.
+config/overlay.json
+config/view.json
 
-# --- src/main: the app. The RE tooling sitting next to it stays untracked:
-# scanner.js, globalHunt.js, pointerScan.js, testChains.js, findOrigin.js,
-# findCellIndex.js, verifyCellIndex.js, watch.js, globalWatch.js, ctLogger.js,
-# ctSnapshot.js, readCtAddresses.js, readStatic.js, compareStatic.js,
-# analyzeRebase.js, probeMapLib.js, smokeTest.js
-src/main/*
-!src/main/index.js
-!src/main/memoryReader.js
-!src/main/win32Input.js
-!src/main/overlayWindow.js
-!src/main/overlayConfig.js
-!src/main/configStore.js
-
-# --- src/renderer: all of it is the app, nothing to exclude.
-
-# --- config: the hard-won findings and the calibration.
-# config/overlay.json and config/view.json are per-machine runtime state the app
-# rewrites as you drag sliders and zoom; the code carries working defaults
-# (overlayConfig.js), so a fresh clone runs without them.
-config/*
-!config/dd2.offsets.json
-!config/calibration.json
+# Byproducts of the reverse-engineering scripts in tools/: memory dumps,
+# pointer-scan results, watch logs. They run from the repo root and write here.
+# Gigabytes of them, and all reproducible — the findings that came out of them
+# live in FINDINGS.md and config/dd2.offsets.json.
+*.bin
+*.csv
+app_log*.txt
+watch*.txt
+chains*.json
+ct_*
+z_*
+cand*.txt
+ce_out.txt
+focused_*
+global_watch.txt
+logger_status.txt
+snapshot_*.txt
+check_*.txt
