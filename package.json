@@ -5,10 +5,12 @@
   "main": "src/main/index.js",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^33.0.0",
+    "electron-builder": "^25.1.8",
     "electron-reloader": "^1.2.3"
   },
   "allowScripts": {
@@ -17,5 +19,35 @@
   },
   "dependencies": {
     "koffi": "^3.1.1"
+  },
+  "build": {
+    "appId": "com.frost.dd2map",
+    "productName": "DD2 Map",
+    "files": [
+      "src/**/*",
+      "config/dd2.offsets.json",
+      "config/calibration.json",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node_modules/koffi/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "artifactName": "DD2Map.exe"
+    },
+    "directories": {
+      "output": "dist"
+    }
   }
 }

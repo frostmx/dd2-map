@@ -11,6 +11,33 @@ npm install
 npm start
 ```
 
+## Building a portable .exe
+
+```
+npm run dist
+```
+
+Produces `dist/DD2Map.exe` — a single ~72 MB portable binary, no installer, no
+Node or Electron needed on the target machine. Just run it.
+
+Two things about the packaged build that are easy to get wrong:
+
+- **Settings are written to `%APPDATA%\dd2-map\config\`, not next to the .exe.**
+  The bundled `config/` lives inside `app.asar`, which is **read-only** — writing
+  there fails silently, so calibration and every slider would appear to save and
+  then be gone on restart. `configStore.js` writes to userData instead, seeding
+  from the copy shipped inside the asar on first run. (In dev it still uses the
+  repo's `config/`, so hand-editing `config/overlay.json` works as you'd expect.)
+  Carrying your tuned settings into the packaged app is a copy:
+  `copy config\overlay.json "%APPDATA%\dd2-map\config\"`
+- **Code signing is off** (`win.signAndEditExecutable: false`). electron-builder
+  otherwise downloads its `winCodeSign` package, which contains macOS symlinks that
+  Windows refuses to extract without Developer Mode or admin — the build dies
+  there. The cost of turning it off is that the .exe carries the default Electron
+  icon and metadata. Enable Developer Mode if you want those.
+
+`config/calibration.json` is bundled, so the .exe ships already calibrated.
+
 Two windows open: the **control window** (the map plus the calibration panel —
 this is where you calibrate and browse) and the **overlay**, which starts hidden.
 

@@ -1,9 +1,9 @@
 const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
 const path = require('node:path');
-const fs = require('node:fs');
 const { findProcessIdByName, findModuleBase, openProcess, readMemory, resolvePointerChain, closeHandle } = require('./memoryReader');
 const overlayWindow = require('./overlayWindow');
 const overlayConfig = require('./overlayConfig');
+const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
@@ -24,8 +24,6 @@ if (!app.isPackaged) {
   } catch { /* electron-reloader not installed — run without hot reload */ }
 }
 
-const CALIBRATION_PATH = path.join(__dirname, '..', '..', 'config', 'calibration.json');
-const VIEW_PATH = path.join(__dirname, '..', '..', 'config', 'view.json');
 
 // ABSOLUTE world position. DD2 uses a floating origin, so the player's raw
 // ("local") coordinates re-center at streaming-cell boundaries. But the game
@@ -94,32 +92,16 @@ function consistentWithLocal(global, local) {
   return Number.isFinite(global) && Math.abs(k - Math.round(k)) < 0.05;
 }
 
-function loadCalibration() {
-  try {
-    return JSON.parse(fs.readFileSync(CALIBRATION_PATH, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
-function saveCalibration(data) {
-  fs.mkdirSync(path.dirname(CALIBRATION_PATH), { recursive: true });
-  fs.writeFileSync(CALIBRATION_PATH, JSON.stringify(data, null, 2));
-}
+// All persistence goes through configStore, which knows that in a PACKAGED build
+// the bundled config/ is inside app.asar and read-only — writes there fail
+// silently, so calibration and settings would seem to save and then vanish on
+// restart. It writes to userData instead, seeding from the shipped copy.
+const loadCalibration = () => configStore.load('calibration');
+const saveCalibration = (data) => configStore.save('calibration', data);
 
 // Persisted view preferences (currently just the default zoom level).
-function loadView() {
-  try {
-    return JSON.parse(fs.readFileSync(VIEW_PATH, 'utf-8'));
-  } catch {
-    return null;
-  }
-}
-
-function saveView(data) {
-  fs.mkdirSync(path.dirname(VIEW_PATH), { recursive: true });
-  fs.writeFileSync(VIEW_PATH, JSON.stringify(data, null, 2));
-}
+const loadView = () => configStore.load('view');
+const saveView = (data) => configStore.save('view', data);
 
 // Both the main window and the overlay run the same follow loop off this feed.
 function broadcast(channel, payload) {

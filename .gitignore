@@ -1,4 +1,5 @@
 node_modules/
+dist/
 
 # Per-machine runtime state the app rewrites as you drag sliders and zoom. The
 # code carries working defaults (src/main/overlayConfig.js), so a fresh clone
