@@ -51,5 +51,26 @@
       && Math.abs(ll.lat) <= 90 && Math.abs(ll.lng) <= 180;
   }
 
-  window.DD2Calib = { apply, invert, isValidLngLat };
+  // Which transform applies right now: the overworld affine, or the inset one for
+  // the dungeon floor you're standing in.
+  //
+  // Every inset is drawn at the same scale and rotation, so they all share one 2x2
+  // linear part (`insetLinear`) and differ only by translation. That's why a dungeon
+  // needs a single correspondence rather than three — and why walking through a
+  // doorway, which hands us one for free, is enough to calibrate it.
+  //
+  // Returns null for an area we can't place (no inset scale seeded yet, or a floor
+  // reached by falling rather than through a portal). Callers must treat that as
+  // "don't move the marker" rather than falling back to the overworld affine, which
+  // would confidently draw you in the wrong place.
+  function forArea(worldCal, areas, areaKey) {
+    if (!areaKey) return worldCal;
+    if (!areas || !areas.insetLinear) return null;
+    const area = areas.areas && areas.areas[areaKey];
+    if (!area || typeof area.c !== 'number' || typeof area.f !== 'number') return null;
+    const lin = areas.insetLinear;
+    return { a: lin.a, b: lin.b, c: area.c, d: lin.d, e: lin.e, f: area.f };
+  }
+
+  window.DD2Calib = { apply, invert, forArea, isValidLngLat };
 })();

@@ -10,6 +10,12 @@ const webview = document.getElementById('mapView');
 let cfg = null;
 let calibration = null;
 
+// The per-dungeon inset transforms. Read-only here — the control window authors
+// them and main pushes every change down, so the two windows can never disagree
+// about where the player is.
+let areas = { insetLinear: null, areas: {} };
+window.dd2overlay.onAreasState((state) => { areas = state; });
+
 let webviewReady = false;
 let markerInstalled = false;
 let probeDone = false;
@@ -190,7 +196,10 @@ function updateRunning(data, now) {
 }
 
 // --- Commands from main (hotkeys) --------------------------------------------
-let baseMapVisible = true;
+// Icons-only until told otherwise. Main asserts the real mode on every F8-on, so
+// this only governs the frames before that command lands — but it has to be false,
+// or the overlay would flash the full map on the way up.
+let baseMapVisible = false;
 
 // The two modes want opposite things, so they get their own opacity: the full map
 // should read as a map, while icons-only floats over live gameplay and must not
@@ -272,7 +281,16 @@ window.dd2overlay.onCommand('overlay:interactive', (interactive) => {
 window.dd2overlay.onGamePosition((data) => {
   if (!cfg || !calibration) return;
 
-  const lngLat = window.DD2Calib.apply(calibration, data.x, data.y);
+  // The transform depends on which area main says we're in: the overworld affine
+  // out in the world, that dungeon's inset transform underground. null means the
+  // area can't be placed (no inset scale seeded yet, or a floor reached by falling
+  // rather than through a portal) — in which case hold the marker still rather than
+  // fall back to the world affine, which would draw you confidently in the wrong
+  // place, out on the surface, while you're in a cave.
+  const transform = window.DD2Calib.forArea(calibration, areas, data.areaKey);
+  if (!transform) return;
+
+  const lngLat = window.DD2Calib.apply(transform, data.x, data.y);
   if (!window.DD2Calib.isValidLngLat(lngLat)) return;
 
   if (!markerInstalled) {
@@ -307,9 +325,11 @@ window.dd2overlay.onGamePosition((data) => {
 Promise.all([
   window.dd2overlay.loadOverlayConfig(),
   window.dd2overlay.loadCalibration(),
-]).then(([overlayCfg, cal]) => {
+  window.dd2overlay.loadAreas(),
+]).then(([overlayCfg, cal, areaState]) => {
   cfg = overlayCfg;
   calibration = cal;
+  if (areaState) areas = areaState;
   baseZoom = typeof cfg.baseZoom === 'number' ? cfg.baseZoom : null;
   applyOpacity();
   applyBrightness();

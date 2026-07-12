@@ -6,7 +6,34 @@
 const store = require('./configStore');
 
 const DEFAULTS = {
-  hotkeys: { toggle: 'F8', baseMap: 'F9', zoomOut: 'F10', zoomIn: 'F11' },
+  hotkeys: {
+    toggle: 'F8',
+    baseMap: 'F9',
+    zoomOut: 'F10',
+    zoomIn: 'F11',
+    // Manual area override. Entering a dungeon is detected from the doorway, which
+    // cannot catch every case: brushing past a cave mouth flips the map, and
+    // dropping through a hole to the floor below never touches a portal at all.
+    areaToggle: 'Insert',
+    floorUp: 'PageUp',
+    floorDown: 'PageDown',
+  },
+
+  // Game units, for the doorway detector (src/main/areaTracker.js). enterRadius has
+  // to absorb the world affine's own fit error too, since the doorways' game coords
+  // are derived from it — so it is a knob, not a constant.
+  enterRadius: 10,
+  rearmRadius: 30,
+  // How long (in 30Hz ticks) you must map outside a dungeon's own inset panel before
+  // the app concludes you left it without using the doorway. The doorway rule alone
+  // misses a wide exit path; this is the backstop.
+  outsideDwellTicks: 20,
+
+  // The overlay always comes up ICONS-ONLY: that's the mode you actually play with,
+  // and it shouldn't depend on what you happened to leave it on last time. F9 brings
+  // the map. Re-asserted on every F8-on, not just at startup — see index.js.
+  // Set false to have it open showing the full map instead.
+  openIconsOnly: true,
 
   // null = adopt whatever zoom the map is already at on first run, then persist.
   baseZoom: null,

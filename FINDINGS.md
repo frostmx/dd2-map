@@ -17,18 +17,24 @@ dd2-map/
     win32Input.js     # koffi/user32: Alt-hold, foreground forcing, ClipCursor release
     overlayWindow.js  # the transparent, click-through, always-on-top overlay window
     overlayConfig.js  # overlay settings + defaults
-    configStore.js    # config/<name>.json load/save
+    configStore.js    # config/<name>.json load/save (userData when packaged)
+    areaTracker.js    # which area you're in: doorway proximity + inset containment
+    areaStore.js      # config/areas.json: the shared inset linear part + per-dungeon
+                      #   translations. Main is its ONLY writer (see below).
   src/renderer/
     index.html/.js    # control window: mapgenie <webview>, calibration, overlay settings
     overlay.html/.js  # overlay: map + player marker only, no UI
-    mapAgent.js       # the script injected into the mapgenie guest (marker, follow,
-                      #   zoom, icons-only, hide-found, found-sync) — shared by both
-    calibration.js    # the world->map affine, shared by both
+    mapAgent.js       # the scripts injected into the mapgenie guest — shared by both:
+                      #   buildInstallMarker (marker, follow, zoom, icons-only,
+                      #   hide-found), buildFoundSync, buildExtractAreas
+    calibration.js    # the affines (world + per-area), shared by both
     preload.js / overlayPreload.js   # contextBridges
   config/
     dd2.offsets.json  # THE memory findings (pointer chains, offsets, backups)
-    calibration.json  # solved world->map affine
+    calibration.json  # solved world->map affine  (written by the RENDERER)
+    areas.json        # per-dungeon inset transforms (written by MAIN)
     overlay.json      # overlay prefs (gitignored; bundled into the .exe on build)
+    mapgenie-areas.json # cached region/portal graph (gitignored; re-derived on launch)
   tools/              # RE tooling — how the offsets were FOUND. Not part of the app.
     scanner.js, globalHunt.js, pointerScan.js, testChains.js, findOrigin.js,
     findCellIndex.js, verifyCellIndex.js, watch.js, globalWatch.js, ctLogger.js,
@@ -404,6 +410,121 @@ detect a jump in band `64 < |Δ| < 400`, subtract the reset portion with an EMA
 velocity estimate) — sub-pixel drift, but per-session calibration and no
 fast-travel. Fully replaced by the global read above and removed from `index.js`.
 `tools/globalHunt.js` / `tools/scanner.js` retain the tooling if ever needed again.
+
+## Dungeons: the inset problem, and mapgenie's portal graph
+
+mapgenie draws every dungeon as an **inset** — a separate, zoomed panel parked off to
+the side of the playable world, but inside the *same* raster and therefore the same
+lng/lat plane. DD2's caves are seamless world geometry, so the game just keeps
+reporting ordinary world coordinates when you walk into one. With a single global
+affine that means the marker stays out at the cave mouth while the cave's POIs sit far
+away in the inset: **1,227 of the map's 5,354 POIs (23%) are in the 72 dungeon insets
+and were unreachable.**
+
+Fixed by making the transform **piecewise**: an affine per area (overworld + one per
+dungeon floor), selected each tick from the live position (`src/main/areaTracker.js`).
+Everything downstream is untouched — swapping the affine flies the camera to the inset
+where the POIs already are.
+
+### mapgenie states the whole dungeon graph outright (the thing that made this cheap)
+
+Read live from the guest, never hardcoded (`mapAgent.js` `__dd2_extract_areas`):
+
+- `sources['subregions-data']` — **74 named dungeon polygons** (`{id, title}` + bbox).
+  Three *regions* (2438 Battahl, 2439 Vermund, 2440 Agamen) are the overworld; the
+  overworld set is derived as "is a region, not a subregion", never a hardcoded id list.
+- **`store.getState().map.locationsById`** — all 5,372 locations as FULL objects. This
+  is the load-bearing part: the geojson source (`locations-data`) carries only a
+  trimmed property set with **no `description`**, and the description is the whole
+  story. Every portal names its destination **by location id**:
+
+  ```
+  **Transitions to:** [Waterfall Cave 1F](https://mapgenie.io/…?locationIds=328583)
+  ```
+
+  Parsing `locationIds=(\d+)` out of those yields **913 edges, every destination
+  resolving**: 131 overworld→dungeon entrances covering **72 of the 74** insets, 123
+  exits, 204 floor-to-floor links.
+
+Matching entrances to insets **by title** also nearly works (98 of 105 exact) — and
+that "nearly" is a trap. Four destinations have `region_id: null`, one of which is the
+**only** edge into Darkhorde Cave, so the id alone loses a whole dungeon. Those four
+fall back to an *exact, unambiguous* subregion-title match (two subregions are both
+called "Sealed Mining Shaft", so uniqueness is checked); anything less certain drops
+the edge. A mis-assigned portal would silently teleport the marker into the wrong
+cave, which is worse than an uncalibrated one.
+
+Not auto-reachable: **Vernworth - Southern Ruins** and **Sealed Mining Shaft** — no
+entrance edge exists in mapgenie's data at all. They need manual calibration.
+
+### Height is NOT usable to detect "inside" (measured in-game — this killed the first design)
+
+The obvious detector — a z-band per dungeon — does not work, and it's worth writing
+down so nobody rebuilds it:
+
+- Entering a cave produces **no step change in height**. The coordinate runs
+  continuously straight through the doorway.
+- Inside is **not reliably lower**. A tower's interior climbs *above* its own entrance.
+
+So there is no height band separating inside from outside, and any z-gate misfires on
+towers. Height is still read and broadcast, but nothing keys off it.
+
+### What we detect on instead: the doorway, plus a containment backstop
+
+1. **Doorway.** Inverting the world affine (`DD2Calib.invert`) puts each of the 131
+   entrances at a known point in GAME coordinates. Come within `enterRadius` (10 units,
+   measured) and you've gone through it. The *same* doorway is both the way in and the
+   way out, so one rule drives both; re-arming only once you're `rearmRadius` (30 units)
+   clear is what stops it strobing while you stand in the entrance.
+2. **Containment backstop.** The doorway rule alone is too brittle to be the only way
+   out: it needs you to pass within 10 units of a point *derived* from the world affine,
+   so it inherits that affine's error, and a slightly wide exit path simply misses it —
+   leaving the map stuck in an inset while you stand in daylight. (Simulated: an exit
+   path passing **13 units** from the doorway never fires.) So we also run the player
+   through the current area's transform and check they still land inside the inset
+   panel mapgenie drew. Strong signal precisely *because* insets are drawn several
+   times larger than the world: once genuinely outside, the magnification throws you
+   far out of the panel. Needs the dungeon calibrated, so it can't be the only rule
+   either — the two cover each other.
+3. **Manual override** (`Insert` in/out, `PageUp`/`PageDown` floor). Not a fallback —
+   a first-class control. Two failure modes are visible to the player and invisible to
+   the app: brushing past a cave mouth without going in, and **dropping through a hole
+   to the floor below without ever touching a portal**.
+
+### Calibration is free, because a crossing IS a correspondence
+
+Every inset is drawn at the **same scale and rotation**, so they all share one 2x2
+linear part (`insetLinear`) and differ only by translation:
+
+```
+lng = A*gx + B*gy + c        A,B,D,E = insetLinear: solved ONCE
+lat = D*gx + E*gy + f        c,f     = per-area: ONE correspondence each
+```
+
+And walking through a doorway hands us that one correspondence for nothing: we know
+the player's world position *and* (from the portal graph) exactly where that doorway
+comes out on the inset. So **a dungeon calibrates itself the first time you walk in**.
+`insetLinear` is seeded once, by running the ordinary 3-point flow inside any one
+dungeon; every dungeon after that costs zero clicks.
+
+- The anchor is taken at **closest approach** to the doorway, not at the instant it
+  fires — firing happens anywhere within `enterRadius`, and at inset scale a 10-unit
+  error is magnified into a visible one. (Simulated: 3.1 units instead of ~10.)
+- **Refine inside a dungeon SHIFTS, it does not re-fit.** The linear part is shared and
+  already known, so there is nothing left to fit — only the offset can be wrong. A
+  least-squares re-fit would let click error bend a linear part that isn't in question,
+  and would need three points to do it. A straight translation is both correct and what
+  lets you drag yourself back into place when an anchor lands slightly off.
+
+### Two files, one writer each (a race worth avoiding)
+
+`config/areas.json` (insetLinear + the per-dungeon translations) is written **only by
+main**, which solves an area the moment you walk into it. `config/calibration.json` (the
+world affine, and Refine) is written **only by the renderer**. One file with two writers
+would let a world Refine clobber every dungeon you'd calibrated, or vice versa.
+
+`config/mapgenie-areas.json` is a derived cache of the extracted graph (gitignored;
+re-extracted on every launch).
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +

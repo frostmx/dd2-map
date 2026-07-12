@@ -14,6 +14,7 @@ const nextPointBtn = document.getElementById('nextPointBtn');
 const resetBtn = document.getElementById('resetCalibrationBtn');
 const toggleBtn = document.getElementById('toggleCalibrationBtn');
 const coordsEl = document.getElementById('coords');
+const areaEl = document.getElementById('area');
 const followChk = document.getElementById('followChk');
 let followPlayer = followChk.checked; // reflects the HTML default (checked)
 followChk.addEventListener('change', () => { followPlayer = followChk.checked; });
@@ -52,25 +53,17 @@ webview.addEventListener('dom-ready', () => {
   extractAreas();
 });
 
-// --- Dungeon areas (diagnostic) ----------------------------------------------
-// mapgenie's dungeons are drawn as INSETS off to the side of the world map, in
-// the same lng/lat plane. DD2's caves are seamless world geometry, so the game
-// keeps reporting ordinary world coords inside one — the marker stays out at the
-// cave mouth while the cave's POIs sit far away in the inset.
+// --- Dungeon areas ------------------------------------------------------------
+// mapgenie draws each dungeon as an INSET off to the side of the world map, in the
+// same lng/lat plane. DD2's caves are seamless world geometry, so the game keeps
+// reporting ordinary world coords inside one, and the marker would otherwise stay
+// out at the cave mouth while the cave's POIs sit far away in the inset.
 //
-// Step one is only to LOOK: pull mapgenie's portal graph (see
-// mapAgent.buildExtractAreas) and report, live, which entrance you're nearest and
-// how your height moves around it. That tells us whether coords really do keep
-// tracking underground, and what proximity radius actually marks a crossing —
-// both of which the real fix has to be built on, and neither of which is worth
-// guessing.
-let areaData = null;
-let entrances = [];       // overworld portals, with positions in GAME coords
-let nearestEntrance = null;
-let heightBand = null;    // height min/max while inside NEAR_RADIUS of one entrance
-
-const NEAR_RADIUS = 100;  // game units: close enough to be "at" an entrance
-const CROSS_RADIUS = 25;  // game units: close enough to be crossing it
+// This window extracts mapgenie's portal graph and hands it to main, which owns the
+// tracking (both windows must agree on where you are, so exactly one of them may
+// decide). Everything below then just consumes `areaKey` off the position feed.
+let areas = { insetLinear: null, areas: {} };  // the per-dungeon inset transforms
+let currentArea = null;   // { key, name, floor } from the feed; null = overworld
 
 function extractAreas(attempt = 0) {
   runInWebview(window.DD2MapAgent.buildExtractAreas()).then((json) => {
@@ -80,82 +73,46 @@ function extractAreas(attempt = 0) {
       if (attempt < 30) setTimeout(() => extractAreas(attempt + 1), 500);
       return;
     }
+    let meta;
     try {
-      areaData = JSON.parse(json);
+      meta = JSON.parse(json);
     } catch {
       return;
     }
     console.log(
-      `[areas] ${areaData.locationCount} locations, ` +
-      `${Object.keys(areaData.subregions).length} subregions, ` +
-      `${areaData.portals.length} portal edges`,
+      `[areas] ${meta.locationCount} locations, ` +
+      `${Object.keys(meta.subregions).length} subregions, ` +
+      `${meta.portals.length} portal edges`,
     );
-    rebuildEntrances();
+    window.dd2.saveAreaMetadata(meta);
   });
 }
 
-// Overworld-side portals, placed in GAME coordinates by running their lng/lat
-// back through the inverse of the world affine. These are the cave mouths: the
-// things the player physically walks into.
-function rebuildEntrances() {
-  entrances = [];
-  if (!areaData || !calibration) return;
-  const overworld = new Set(areaData.overworldRegionIds);
-  for (const p of areaData.portals) {
-    if (!overworld.has(p.fromRegion)) continue;   // not an overworld-side portal
-    if (overworld.has(p.toRegion)) continue;      // overworld -> overworld: not a dungeon
-    const g = window.DD2Calib.invert(calibration, p.fromLng, p.fromLat);
-    if (!g) continue;
-    const sub = areaData.subregions[p.toRegion];
-    entrances.push({
-      x: g.x,
-      y: g.y,
-      title: p.fromTitle,
-      dest: p.toTitle,
-      destArea: (sub && sub.title) || String(p.toRegion),
-      toRegion: p.toRegion,
-    });
-  }
-  console.log(`[areas] ${entrances.length} dungeon entrances placed in game coords`);
+window.dd2.loadAreas().then((state) => { if (state) areas = state; });
+window.dd2.onAreasState((state) => {
+  areas = state;
+  updateAreaLabel();
+});
+
+// The transform for wherever we are now. null means "this area can't be placed" —
+// no inset scale seeded yet, or a floor reached by falling rather than through a
+// portal. The caller must NOT fall back to the world affine in that case: that would
+// confidently draw the marker out in the overworld while you're underground.
+function currentTransform() {
+  return window.DD2Calib.forArea(calibration, areas, currentArea && currentArea.key);
 }
 
-// Nearest cave mouth, and how the player's height moves while near it. The height
-// band resets on leaving the radius, so what you read is the range for THIS
-// approach — which is exactly the "does going inside separate cleanly by height?"
-// question.
-function updateNearestEntrance(data) {
-  if (!entrances.length) { nearestEntrance = null; return; }
-  let best = null;
-  let bestDist = Infinity;
-  for (const e of entrances) {
-    const d = Math.hypot(data.x - e.x, data.y - e.y);
-    if (d < bestDist) { bestDist = d; best = e; }
-  }
-  const wasNear = nearestEntrance && nearestEntrance.dist <= NEAR_RADIUS;
-  const isNear = bestDist <= NEAR_RADIUS;
-  const changed = !nearestEntrance || nearestEntrance.entrance !== best;
+function areaLabel() {
+  if (!currentArea) return 'Overworld';
+  const name = `${currentArea.name} ${currentArea.floor}`.trim();
+  const rec = areas.areas[currentArea.key];
+  if (!areas.insetLinear) return `${name} — no inset scale yet (calibrate one dungeon)`;
+  if (!rec) return `${name} — not calibrated`;
+  return `${name}${rec.auto ? ' — auto' : ''}`;
+}
 
-  if (isNear && (!wasNear || changed)) {
-    heightBand = { min: data.height, max: data.height };
-    console.log(`[areas] approaching "${best.title}" -> ${best.destArea} (${bestDist.toFixed(1)}u)`);
-  } else if (!isNear) {
-    heightBand = null;
-  }
-  if (heightBand) {
-    heightBand.min = Math.min(heightBand.min, data.height);
-    heightBand.max = Math.max(heightBand.max, data.height);
-  }
-
-  const wasCrossing = nearestEntrance && nearestEntrance.dist <= CROSS_RADIUS;
-  const isCrossing = bestDist <= CROSS_RADIUS;
-  if (isCrossing && !wasCrossing) {
-    console.log(
-      `[areas] AT "${best.title}" -> ${best.destArea}: ` +
-      `world ${data.x.toFixed(1)}, ${data.y.toFixed(1)}  h ${data.height.toFixed(1)}`,
-    );
-  }
-
-  nearestEntrance = { entrance: best, dist: bestDist };
+function updateAreaLabel() {
+  areaEl.textContent = areaLabel();
 }
 
 // Mirrors found-marks between this window and the overlay: they're two separate
@@ -295,12 +252,11 @@ function fitResidualGameUnits(cal) {
   return maxErr;
 }
 
-// applyCalibration + the marker/follow guest script now live in calibration.js
-// and mapAgent.js, shared with the overlay window so the two can't drift apart.
-// This window passes no zoom target (it owns its zoom via the saved-view glide
-// below) and keeps mapgenie's chrome — it's where you browse and calibrate.
-const applyCalibration = (gameX, gameY) => window.DD2Calib.apply(calibration, gameX, gameY);
-
+// The affine apply/forArea helpers and the marker/follow guest script live in
+// calibration.js and mapAgent.js, shared with the overlay window so the two can't
+// drift apart. This window passes no zoom target (it owns its zoom via the
+// saved-view glide below) and keeps mapgenie's chrome — it's where you browse and
+// calibrate.
 const INSTALL_MARKER = window.DD2MapAgent.buildInstallMarker({ hideChrome: false });
 
 // Overlay knobs. The overlay has no UI of its own, so the settings worth changing
@@ -393,7 +349,29 @@ refineBtn.addEventListener('click', async () => {
       const { lng, lat } = JSON.parse(result);
       const newPoint = { gameX: lastGamePos.x, gameY: lastGamePos.y, lng, lat };
 
-      if (Array.isArray(calibration.points) && calibration.points.length >= 3) {
+      if (currentArea) {
+        // INSIDE A DUNGEON: shift, don't re-fit.
+        //
+        // Every inset shares one scale and rotation, so a dungeon's linear part is
+        // already known and there is nothing left to fit — only the offset can be
+        // wrong. Feeding this correction into a least-squares re-fit would let click
+        // error bend a linear part that isn't in question, and would need three
+        // points to do it. A straight translation is both what's correct here and
+        // what lets you simply drag yourself back into place when a crossing anchor
+        // lands slightly off.
+        const transform = currentTransform();
+        if (!transform) {
+          setStatus('This area has no transform yet — calibrate a dungeon first (3 points) to seed the inset scale.');
+        } else {
+          const predicted = window.DD2Calib.apply(transform, lastGamePos.x, lastGamePos.y);
+          window.dd2.shiftArea({
+            areaKey: currentArea.key,
+            dLng: lng - predicted.lng,
+            dLat: lat - predicted.lat,
+          });
+          setStatus(`Shifted ${currentArea.name} ${currentArea.floor} into place.`.replace(/\s+/g, ' '));
+        }
+      } else if (Array.isArray(calibration.points) && calibration.points.length >= 3) {
         // Preferred: treat this correction as a NEW far-flung correspondence and
         // re-fit the whole affine over every point collected so far. Teleport
         // destinations are spread across the map, so a few jump+refine cycles
@@ -409,7 +387,6 @@ refineBtn.addEventListener('click', async () => {
         delete calibration.offsetLng;
         delete calibration.offsetLat;
         window.dd2.saveCalibration(calibration);
-        rebuildEntrances(); // the affine moved, so the entrances' game coords did too
         const resid = fitResidualGameUnits(calibration);
         const q = calibrationQuality(pts);
         let msg = `Added point (${pts.length} total) and re-fit — max fit error ~${resid == null ? '?' : resid.toFixed(1)} game units`;
@@ -493,31 +470,55 @@ window.dd2.onCalibrationClickResult((data) => {
   setStatus(`Recorded point ${points.length}/${CALIBRATION_POINT_COUNT}.`);
 
   if (points.length === CALIBRATION_POINT_COUNT) {
-    // Merge rather than replace — the file also carries the per-dungeon inset
-    // transforms, which a fresh world fit has no business discarding. Keep the raw
-    // correspondences too, so each future Refine can add a point and re-solve the
-    // whole affine (converging toward an exact fit).
-    calibration = {
-      ...calibration,
-      ...solveAffine(points),
-      points: points.map((p) => ({ gameX: p.gameX, gameY: p.gameY, lng: p.lng, lat: p.lat })),
-    };
-    // A fresh fit supersedes any legacy constant offset. Merging would otherwise
-    // carry a stale one over and apply it on top of the new affine.
-    delete calibration.offsetLng;
-    delete calibration.offsetLat;
-    window.dd2.saveCalibration(calibration);
-    rebuildEntrances();
-    runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
+    const pts = points.map((p) => ({ gameX: p.gameX, gameY: p.gameY, lng: p.lng, lat: p.lat }));
+    const fit = solveAffine(pts);
     const q = calibrationQuality(points);
-    setCalibrationMode(false);
-    refineBtn.disabled = false;
-    // Order matters: setCalibrationMode(false) resets status to "Idle.", so set
-    // the real message afterward.
-    if (q.warnings.length) {
-      setStatus(`Calibration saved, but ${q.warnings.join('; ')}. Jump somewhere far and hit Refine to improve it, or Reset for a wider triangle.`);
+
+    if (currentArea) {
+      // Calibrating INSIDE A DUNGEON seeds the shared inset scale and rotation.
+      // Every inset is drawn alike, so this 2x2 linear part is the ONLY thing all
+      // the others were missing — from here on a dungeon needs no clicks at all,
+      // because walking through its doorway supplies the one correspondence that
+      // pins its offset. You do this once, in one cave.
+      window.dd2.calibrateArea({
+        areaKey: currentArea.key,
+        linear: { a: fit.a, b: fit.b, d: fit.d, e: fit.e },
+        area: {
+          subregionId: Number(String(currentArea.key).split('|')[0]),
+          floor: currentArea.floor,
+          name: currentArea.name,
+          c: fit.c,
+          f: fit.f,
+          points: pts,
+        },
+      });
+      runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
+      setCalibrationMode(false);
+      setStatus(
+        `Inset scale seeded from ${currentArea.name}. Every other dungeon now ` +
+        'calibrates itself when you walk in.' +
+        (q.warnings.length ? ` (But ${q.warnings.join('; ')}.)` : ''),
+      );
     } else {
-      setStatus('Calibration complete! Marker should now track your position.');
+      // Merge rather than replace — the world affine is only part of what this
+      // window holds. Keep the raw correspondences too, so each future Refine can
+      // add a point and re-solve the whole affine (converging toward an exact fit).
+      calibration = { ...calibration, ...fit, points: pts };
+      // A fresh fit supersedes any legacy constant offset. Merging would otherwise
+      // carry a stale one over and apply it on top of the new affine.
+      delete calibration.offsetLng;
+      delete calibration.offsetLat;
+      window.dd2.saveCalibration(calibration);
+      runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
+      setCalibrationMode(false);
+      refineBtn.disabled = false;
+      // Order matters: setCalibrationMode(false) resets status to "Idle.", so set
+      // the real message afterward.
+      if (q.warnings.length) {
+        setStatus(`Calibration saved, but ${q.warnings.join('; ')}. Jump somewhere far and hit Refine to improve it, or Reset for a wider triangle.`);
+      } else {
+        setStatus('Calibration complete! Marker should now track your position.');
+      }
     }
   } else {
     setStatus(`Point ${points.length} recorded. Walk to another distant landmark, then click "Next Point".`);
@@ -527,29 +528,29 @@ window.dd2.onCalibrationClickResult((data) => {
 
 window.dd2.onGamePosition((data) => {
   lastGamePos = data;
-  updateNearestEntrance(data);
+
+  const areaChanged = (currentArea && currentArea.key) !== data.areaKey;
+  currentArea = data.areaKey
+    ? { key: data.areaKey, name: data.areaName, floor: data.areaFloor }
+    : null;
+  if (areaChanged) updateAreaLabel();
 
   let lines =
     `local ${data.localX.toFixed(1)}, ${data.localY.toFixed(1)}  h ${data.height.toFixed(1)}\n` +
     `world ${data.x.toFixed(1)}, ${data.y.toFixed(1)}`;
-  if (nearestEntrance) {
-    const { entrance: e, dist } = nearestEntrance;
-    lines += `\nnear  ${e.destArea}  ${dist.toFixed(1)}u`;
-    if (heightBand) {
-      lines += `\n  h ${heightBand.min.toFixed(1)} … ${heightBand.max.toFixed(1)}` +
-               `  (Δ ${(heightBand.max - heightBand.min).toFixed(1)})`;
-    }
-  } else if (areaData) {
-    lines += '\nnear  — (no entrances placed: calibrate first)';
+  if (data.near) {
+    lines += `\ndoor  ${data.near.name}  ${data.near.dist.toFixed(1)}u`;
   }
   coordsEl.textContent = lines;
 
   if (calibration) {
-    const lngLat = applyCalibration(data.x, data.y);
-    // Guard: a stale/degenerate transform can produce out-of-range coordinates,
-    // which Mapbox rejects (throwing every tick). Skip the update instead.
-    const valid = lngLat && Number.isFinite(lngLat.lng) && Number.isFinite(lngLat.lat)
-      && Math.abs(lngLat.lat) <= 90 && Math.abs(lngLat.lng) <= 180;
+    // The transform depends on where you ARE: the overworld affine out in the
+    // world, that dungeon's inset transform underground. null = we can't place this
+    // area, in which case leave the marker where it is rather than drawing it
+    // somewhere confidently wrong.
+    const transform = currentTransform();
+    const lngLat = transform && window.DD2Calib.apply(transform, data.x, data.y);
+    const valid = window.DD2Calib.isValidLngLat(lngLat);
     if (valid) {
       // Inject the resident updater once, then drive it with a tiny per-tick
       // call. Follow is suppressed during refine (marker is frozen while the
@@ -575,7 +576,6 @@ window.dd2.loadCalibration().then((saved) => {
   if (saved) {
     calibration = saved;
     refineBtn.disabled = false;
-    rebuildEntrances(); // entrances are placed by INVERTING this affine
     setStatus('Loaded saved calibration.');
   } else {
     setStatus('No saved calibration yet. Click "Start Calibration" to begin.');
