@@ -33,22 +33,27 @@
 const DEFAULTS = {
   // Game units. Coming within this of an entrance means you are in the doorway.
   // Deliberately configurable — it also has to absorb the world affine's own fit
-  // error, since the doorway positions are derived from it.
-  enterRadius: 15,
+  // error, since the doorway positions are derived from it. 15 was too eager: the map
+  // flipped visibly before you reached the entrance.
+  enterRadius: 10,
 
-  // Ticks (at 30Hz) you must be OUTSIDE enterRadius before the doorway can fire
-  // again. Not a distance — a dwell.
+  // Re-arming the doorway takes BOTH of these: you must be at least rearmMargin units
+  // beyond enterRadius, and stay there for rearmDwellTicks (at 30Hz).
   //
-  // This was a radius (you had to get N units clear before re-arming) and that was
-  // simply the wrong mechanism. The latch exists to stop ONE crossing firing over and
-  // over while you stand in the doorway; that is about leaving the radius, not about
-  // getting far away. As a radius it broke re-entry: linger anywhere near a cave
-  // mouth after stepping out and you never re-armed, so walking back in did nothing
-  // and needed a forced Insert. (Seen repeatedly in live play, at 40 AND at 20.)
+  // It used to be a big distance alone (you had to get 20-40 units clear), and that
+  // broke re-entry outright: you don't get that far from a cave mouth before turning
+  // round, so walking back into a cave you just left did nothing and needed a forced
+  // Insert. Live play showed it at 40 and again at 20.
   //
-  // As a dwell it does its job exactly and nothing more: standing in a doorway never
-  // leaves the radius, so it can never strobe — while stepping out and turning round
-  // re-arms in half a second, which is what you want.
+  // A dwell alone doesn't work either, though — it strobes. Mill around a doorway and
+  // you drift in and out across enterRadius; each exit re-arms after half a second and
+  // the next step back in fires again. (Simulated at enterRadius 10: 16 flips.)
+  //
+  // So: a SMALL band plus a dwell. The band means idling around an entrance never
+  // counts as having left it; the dwell means a brief clip past the edge doesn't
+  // either. Together they're enough to stop the strobe while still re-arming the
+  // moment you genuinely step outside — which is all the latch was ever for.
+  rearmMargin: 5,
   rearmDwellTicks: 15,
 
   // Ticks (at 30Hz) the player must map outside the dungeon's inset panel before we
@@ -285,10 +290,10 @@ function createTracker() {
       if (!near) return current;
       lastNear = { name: near.door.name, dist: near.dist };
 
-      // Re-arm by DWELL outside the radius, not by distance from it. Standing in a
-      // doorway never leaves the radius, so this can't strobe; stepping out and
-      // turning round re-arms in half a second, so re-entry just works.
-      if (near.dist > cfg.enterRadius) {
+      // Re-arm: a small band beyond the radius, held for a moment. Neither half works
+      // alone — a big distance breaks re-entry, a bare dwell strobes when you idle
+      // across the edge. See DEFAULTS.
+      if (near.dist > cfg.enterRadius + cfg.rearmMargin) {
         clearTicks += 1;
         if (clearTicks >= cfg.rearmDwellTicks) armed = true;
       } else {
