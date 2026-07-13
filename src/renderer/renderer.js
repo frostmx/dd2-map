@@ -299,6 +299,10 @@ wireSlider('iconBrightness', 'iconBrightness', 'iconBrightnessValue', 0.35);
 //               reading as a distinction at all once the overlay's own opacity and
 //               brightness are stacked on top. This window keeps showing them, so
 //               you can still find and mark them here.
+//   rotateWithHeading — off by default; turns the OVERLAY's map so the way you're
+//               running is up, which is what makes "the POI is above the marker"
+//               mean "run straight on". THIS window stays north-up regardless:
+//               clicking calibration landmarks on a spinning map is miserable.
 function wireCheckbox(key, id) {
   const box = document.getElementById(id);
   window.dd2.loadOverlayConfig().then((ocfg) => { box.checked = !!(ocfg && ocfg[key]); });
@@ -307,6 +311,7 @@ function wireCheckbox(key, id) {
 
 wireCheckbox('autoZoom', 'autoZoom');
 wireCheckbox('hideFound', 'hideFound');
+wireCheckbox('rotateWithHeading', 'rotateWithHeading');
 
 nextPointBtn.addEventListener('click', () => armNextClick());
 

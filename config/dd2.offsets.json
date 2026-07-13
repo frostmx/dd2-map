@@ -10,9 +10,16 @@
     "structBase": "0x47a55dd0",
     "note": "Confirmed via CE 'find what writes': the writing code addresses this struct as [base + 0x40]. Base held in RBX/RCX. Position floats are at base+0x40/0x44/0x48. This base reallocates — needs a static pointer path (pointer scan targeting 0x47a55dd0).",
     "fields": {
-      "x": { "offset": "0x40" },
-      "height": { "offset": "0x44", "note": "jump-validated, camera-rotation-invariant" },
-      "y": { "offset": "0x48" }
+      "x": {
+        "offset": "0x40"
+      },
+      "height": {
+        "offset": "0x44",
+        "note": "jump-validated, camera-rotation-invariant"
+      },
+      "y": {
+        "offset": "0x48"
+      }
     }
   },
   "writingInstruction": "near DD2.exe+0x54BB683 (RIP at post-write addss xmm3,xmm4; actual movss [rbx+40] just before)",
@@ -21,36 +28,99 @@
     "note": "Found via CE pointer scan, narrowed through a full DD2 restart + 2 reloads (18 survivors), all validated live by testChains.js. Resolves to the struct base; position at base+0x40/0x44/0x48. CE offset order: deref [moduleBase+staticOffset], then apply offsets[0..n-1] each with a deref, add offsets[n] last without deref.",
     "module": "DD2.exe",
     "staticOffset": "0x0F8E4388",
-    "offsets": ["0x50", "0x20", "0x28", "0x70", "0x20", "0x0"],
-    "positionOffsets": { "x": "0x40", "height": "0x44", "y": "0x48" },
+    "offsets": [
+      "0x50",
+      "0x20",
+      "0x28",
+      "0x70",
+      "0x20",
+      "0x0"
+    ],
+    "positionOffsets": {
+      "x": "0x40",
+      "height": "0x44",
+      "y": "0x48"
+    },
     "backupChains": [
-      { "staticOffset": "0x0F8E9420", "offsets": ["0x48", "0x10", "0x20", "0x20", "0x70", "0x20", "0x0"] },
-      { "staticOffset": "0x0F8FD5B8", "offsets": ["0x1D8", "0x1A0", "0x18", "0x1B8", "0x150", "0x20", "0x0"] },
-      { "staticOffset": "0x0FE46548", "offsets": ["0x1D8", "0x1A0", "0x18", "0x1B8", "0x150", "0x20", "0x0"] }
+      {
+        "staticOffset": "0x0F8E9420",
+        "offsets": [
+          "0x48",
+          "0x10",
+          "0x20",
+          "0x20",
+          "0x70",
+          "0x20",
+          "0x0"
+        ]
+      },
+      {
+        "staticOffset": "0x0F8FD5B8",
+        "offsets": [
+          "0x1D8",
+          "0x1A0",
+          "0x18",
+          "0x1B8",
+          "0x150",
+          "0x20",
+          "0x0"
+        ]
+      },
+      {
+        "staticOffset": "0x0FE46548",
+        "offsets": [
+          "0x1D8",
+          "0x1A0",
+          "0x18",
+          "0x1B8",
+          "0x150",
+          "0x20",
+          "0x0"
+        ]
+      }
     ]
   },
   "staticLocalPosition": {
     "note": "MODULE-STATIC copies of the player's LOCAL (cell-relative) position — no pointer chain needed. Layout is a Vec3: x@+0, h@+4, y@+8. These re-center to 0 (unlike the pointer-chain struct at +0x40, which carries a constant -8/-8 offset on x/y and -6.7 on h: static = chain + 8). Two verified mirrors, values identical.",
     "module": "DD2.exe",
-    "mirrors": ["0x0FA65F70", "0x0FC26890"],
-    "fields": { "x": "+0x0", "height": "+0x4", "y": "+0x8" },
+    "mirrors": [
+      "0x0FA65F70",
+      "0x0FC26890"
+    ],
+    "fields": {
+      "x": "+0x0",
+      "height": "+0x4",
+      "y": "+0x8"
+    },
     "notAMirror": "0x0F8FD268 — layout is [h, -x, y] (x is SIGN-FLIPPED). Different struct; do not read x from it."
   },
   "globalPosition": {
     "note": "SOLVED 2026-07-11. The ABSOLUTE world position lives in memory as a Vec3 (X @ +0, Y @ +8; the +4 field is NOT on the 128-grid, ignore it). global = local + k*128. Reading it directly fully solves floating origin: no dead reckoning, zero drift, teleport-proof. WIRED INTO THE APP (src/main/index.js).",
     "foundVia": "src/main/globalHunt.js identified the live global (lockstep filter d(global)==d(local) between crossings, then a boundary crossing separates global from local). Then a CE + Node pointer scan against a stable heap copy, narrowed across 3 reloads, validated by src/main/pointerScan.js.",
-    "fields": { "x": "+0x0", "y": "+0x8" },
+    "fields": {
+      "x": "+0x0",
+      "y": "+0x8"
+    },
     "stableChain": {
       "note": "PRIMARY (wired). Validated across TELEPORT + reload + full game restart (ASLR). Reaches the gameplay-live global copy. Offset order = CE display order = resolvePointerChain order.",
       "module": "DD2.exe",
       "staticOffset": "0x0FD26358",
-      "offsets": ["0x1A8", "0x410"],
-      "readOffsets": { "x": "0x0", "y": "0x8" }
+      "offsets": [
+        "0x1A8",
+        "0x410"
+      ],
+      "readOffsets": {
+        "x": "0x0",
+        "y": "0x8"
+      }
     },
     "fallbackChain": {
       "note": "On a DIFFERENT static base/structure; also teleport+restart stable. Used if primary fails/inconsistent on a tick.",
       "staticOffset": "0x0F8E1130",
-      "offsets": ["0x210", "0x50"]
+      "offsets": [
+        "0x210",
+        "0x50"
+      ]
     },
     "teleportLesson": "An earlier chain (0BB0E1D0 -> [0x40,0x20,0x190,0x3F8,0x88,0x3E0]) survived reload/restart but read GARBAGE after a teleport until the in-game map was opened — it threaded a MAP-OWNED copy only refreshed when the map is up. Always test chains with a teleport WITHOUT opening the map; keep only ones that stay consistent (reach the gameplay-live copy).",
     "candidateFiles": "global.chains2.json (teleport-robust set, wired), global.chains.json (earlier map-owned set)",
@@ -59,5 +129,121 @@
   "backupCandidate": {
     "structBase": "0x3b8c4b10",
     "note": "Also validated (camera-rotation-invariant, real X/Z movement tracking, height stays flat on flat ground) — likely another duplicate copy of the same player position. Not currently used; kept as a fallback if 0x47a55e10 stops resolving."
+  },
+  "dungeonZoneIndex": {
+    "note": "Found via CE value-scanning (2026-07-13). insideFlag is WIRED INTO THE APP (src/main/index.js, src/main/areaTracker.js) and replaced the doorway-proximity guess for the in/out decision. zoneIndex is NOT yet usable — see its note. Module-static, no pointer chain (same category of read as staticLocalPosition), so expected restart-stable by construction; the user observed both values unchanged across a full game restart. Not yet tested across a DD2 game-version update.",
+    "insideFlag": {
+      "staticOffset": "0x0FA62CAC",
+      "type": "4 Bytes (int32)",
+      "values": {
+        "0": "overworld — CONFIRMED live 2026-07-13 (was only presumed before)",
+        "1": "inside a dungeon",
+        "2": "ALSO inside (user-observed) — some second kind of interior; what distinguishes it from 1 is not yet known. Both non-zero values are treated as 'inside'; tools/zoneLog.js is collecting the data to find out what 2 actually is."
+      },
+      "note": "Does not change between dungeon floors. Persists across full game restart. This is what the app keys 'am I inside' on. LAGS THE MAP: it does not flip the instant the in-game map changes — a walk out of a cave showed the map already switched while the flag still read 1. It settles once you are properly out. Don't conclude from one sample that it's stale (we did, briefly, and were wrong)."
+    },
+    "zoneIndex": {
+      "staticOffset": "0x0FA62CB0",
+      "type": "4 Bytes (int32)",
+      "note": "The GAME's own dungeon id. NOT mapgenie's numbering — mapgenie's subregion ids run 2441-2514, while observed game ids are 18, 69, 2010. The two do not coincide and a mapping table has to be BUILT. Until one exists, zoneIndex cannot name a dungeon and the app instead picks the NEAREST KNOWN ENTRANCE from mapgenie's portal graph. Run tools/zoneLog.js while playing: it pairs (insideFlag, zoneIndex) with the nearest entrance's name on every transition, which is exactly the table needed. Once complete, 'which dungeon' becomes a lookup, stops depending on the world affine, and reaches the two dungeons mapgenie has no entrance for.",
+      "overworldValue": "-1 (0xFFFFFFFF), NOT 0 — a sentinel. Confirmed live 2026-07-13.",
+      "keyOn": "the PAIR (insideFlag, zoneIndex) — the flag selects an id namespace: flag-1 ids are small (18, 69), flag-2 ids are four-digit and sequential (2010, 2011).",
+      "measured": [
+        {
+          "flag": 1,
+          "zone": 18,
+          "dungeon": "Forgotten Tunnel",
+          "mapgenieSubregion": 2447
+        },
+        {
+          "flag": 1,
+          "zone": 69,
+          "dungeon": "Stragglers' Cave",
+          "mapgenieSubregion": 2443
+        },
+        {
+          "flag": 2,
+          "zone": 2010,
+          "dungeon": "Stormwind Cave",
+          "mapgenieSubregion": 2460
+        },
+        {
+          "flag": 2,
+          "zone": 2011,
+          "dungeon": "The Gracious Hand's Vaults",
+          "mapgenieSubregion": 2459
+        }
+      ],
+      "status": "COLLECTING — 4 of ~74. See tools/zoneLog.js and zone_log.txt (gitignored)."
+    },
+    "roomHash": {
+      "staticOffset": "0x0FA62C94",
+      "relativeToInsideFlag": -24,
+      "type": "4 Bytes (int32 / hash)",
+      "note": "NOT USABLE FOR FLOORS — dead end, recorded so it is not retried. It is an id for a streaming CELL, not a room and not a floor: the same hash (1bc90b46, ae32b49d) appears at h=-13.7 AND h=-5.2 in The Gracious Hand's Vaults, and two of them flicker back and forth three times a second while you stand still on a boundary. It IS deterministic across sessions (walking a cave one way and back gives the identical hashes in reverse), which is what made it look usable — it was tried as a learned roomHash->floor key and it fought the player, flipping the floor in stairwells until every room was marked ambiguous. Floors come from HEIGHT instead (areas.floorHeights); see FINDINGS. Still read and logged by tools/zoneLog.js.",
+      "usedFor": "diagnostics only (zoneLog)"
+    },
+    "unknownFloat12": {
+      "staticOffset": "0x0FA62CB8",
+      "relativeToInsideFlag": 12,
+      "type": "float",
+      "note": "0.0 in the overworld; inside a dungeon it wanders (0.46-0.75 observed) rather than stepping. Not an index. Logged by zoneLog.js in case it turns out to mean something; a blend/fog/darkness factor is the obvious guess."
+    },
+    "pointerChainCandidates": {
+      "note": "Cheat Engine pointer scan surfaced multiple heap chains all resolving to 14FA62CB0 — redundant now that the target is known to be a plain module-static address (moduleBase + 0xFA62CB0 = 0x14FA62CB0 for a typical 0x140000000 load base), so none of these are needed or were validated. Kept only as a record of what CE found.",
+      "candidates": [
+        {
+          "base": "0x0996CE48",
+          "offsets": [
+            "0x1C0"
+          ]
+        },
+        {
+          "base": "0x09987360",
+          "offsets": [
+            "0x1C8"
+          ]
+        },
+        {
+          "base": "0x099872F0",
+          "offsets": [
+            "0x6C8"
+          ]
+        },
+        {
+          "base": "0x09987B8",
+          "offsets": [
+            "0xADC"
+          ]
+        },
+        {
+          "base": "0x0987248",
+          "offsets": [
+            "0xB0C"
+          ]
+        },
+        {
+          "base": "0x0996F490",
+          "offsets": [
+            "0xB38"
+          ]
+        },
+        {
+          "base": "0x0996C198",
+          "offsets": [
+            "0xBB0"
+          ]
+        },
+        {
+          "base": "0x099871D8",
+          "offsets": [
+            "0xBE8"
+          ]
+        }
+      ]
+    }
+  },
+  "floorHeights": {
+    "note": "Floors are told apart by HEIGHT, learned per dungeon and stored in config/areas.json under floorHeights. Nothing in memory gives the floor: insideFlag and zoneIndex are constant across a dungeon's floors, and roomHash spans them. Measured floor gaps: 5.8u (The Gracious Hand's Vaults) to 16.6u (Forgotten Tunnel), with up to 4u of wander within one floor — so no fixed height-CHANGE threshold works, which is why it is learned as an absolute per dungeon."
   }
 }

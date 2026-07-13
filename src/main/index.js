@@ -6,7 +6,7 @@ const overlayConfig = require('./overlayConfig');
 const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
-const { createTracker } = require('./areaTracker');
+const { createTracker, floorOf } = require('./areaTracker');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -16,13 +16,30 @@ overlayWindow.applyThrottlingSwitches();
 // Dev-only hot reload: reloads the window when a renderer file changes and
 // relaunches the app when a main-process file changes. Never active in a
 // packaged build; wrapped so a missing dependency can't break startup.
+//
+// IT WATCHES THE WHOLE REPO, so anything that WRITES into the repo while the app runs
+// makes it reload — and a reload wipes the injected marker and re-fetches the mapgenie
+// page, which you see as the map blanking and redrawing mid-game.
+//
+// That is not hypothetical. Two separate cases have caused it:
+//   - config/ — the runtime state we write ourselves (calibration, zoom, areas). Saving
+//     the zoom would reload the app on every zoom change.
+//   - zone_log.txt — tools/zoneLog.js appends a line on every room change, so simply
+//     WALKING THROUGH A DUNGEON with the logger running reloaded the app over and over
+//     (measured: 21 reloads in one session; the more you explored, the worse it got).
+//
+// So the rule is: the watcher may only ever see SOURCE. Anything written at runtime —
+// by the app or by the RE tooling — has to be ignored, or it will do this again with
+// whatever the next tool happens to write.
 if (!app.isPackaged) {
   try {
-    // Ignore everything under config/ — it holds runtime state we write
-    // ourselves (calibration, saved zoom). Without this, saving the zoom on
-    // every change would reload the app each time you zoom. Regex matches the
-    // config path segment on both slash styles, absolute or relative.
-    require('electron-reloader')(module, { ignore: [/[\/\\]config[\/\\]/] });
+    require('electron-reloader')(module, {
+      ignore: [
+        /[\/\\]config[\/\\]/,          // runtime state: calibration, view, areas, the graph cache
+        /[\/\\]tools[\/\\]/,           // the RE tooling isn't part of the running app
+        /\.(txt|csv|bin|log)$/i,       // what that tooling writes — zone_log.txt et al
+      ],
+    });
   } catch { /* electron-reloader not installed — run without hot reload */ }
 }
 
@@ -54,6 +71,26 @@ const GLOBAL_Y_OFFSET = 0x8n;
 // as a sanity reference (global - local must be an exact multiple of 128).
 const LOCAL_MIRROR_OFFSET = 0x0fa65f70n;
 const CELL = 128;
+
+// Dungeon zone state, straight from the game — no pointer chain, same kind of read as
+// the local mirror above. Found by CE value-scanning (2026-07-13; see
+// config/dd2.offsets.json). Three fields we care about, so one read covers them all:
+//
+//   -24  roomHash    -1 outside; inside, an id for the streaming cell you're in. NOT a
+//                     floor and NOT usable as one — the same hash turns up at h=-13.7
+//                     and h=-5.2 in one dungeon. Read only so zoneLog can record it.
+//     0  insideFlag   0 = overworld; 1 and 2 both = inside (2 is some other kind of
+//                     interior — seen in Stormwind Cave; both mean inside, so it
+//                     doesn't matter which)
+//    +4  zoneIndex    the game's own dungeon id. NOT mapgenie's numbering (game: 18,
+//                     69, 2010; mapgenie subregions: 2441-2514), so it can't name a
+//                     dungeon yet — see tools/zoneLog.js.
+//
+// insideFlag replaces guessing entry/exit from proximity to a doorway position derived
+// from the world affine. The FLOOR comes from height (see areaTracker), which is the only
+// signal that can carry it: the game reports the same (x, y) on every floor of a dungeon.
+const ZONE_WINDOW_OFFSET = 0x0fa62c94n;  // roomHash; insideFlag at +24, zoneIndex at +28
+const ZONE_WINDOW_SIZE = 32;
 
 const CALIB_PREFIX = '__DD2_CALIB__';
 const FOUND_PREFIX = '__DD2_FOUND__';
@@ -118,7 +155,7 @@ let areaMeta = null;                 // mapgenie's region/portal graph
 let lastAreaKey = null;              // for edge detection on the broadcast
 
 function pushAreas() {
-  tracker.setAreas(areas);  // the tracker's containment backstop reads these
+  tracker.setHeights(areas.floorHeights);   // where each floor sits, in game units
   broadcast('areas:state', areas);
 }
 
@@ -182,15 +219,105 @@ function absorbAnchor() {
   };
   areaStore.save(areas);
   pushAreas();
-  // The closest approach is the number that matters, and it is NOT the distance the
-  // doorway fired at — that one is always just under enterRadius by construction (the
-  // rule triggers on the tick you cross into the radius), so it says nothing about
-  // how near the doorway you really got. This is what sets how far off the auto
-  // placement starts, and therefore how big a Refine shift you'd have to make.
+  // How far the player was from the nearest KNOWN doorway at the instant the game's
+  // own zone flag said "you're in here" — not a detection radius any more, just how
+  // far off this anchor (and therefore the auto placement) is likely to be. Sets how
+  // big a Refine shift you'd need if it looks off.
   console.log(
     `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
-    `(closest approach to the doorway: ${anchor.dist.toFixed(1)}u)`,
+    `(${anchor.dist.toFixed(1)}u from the nearest known doorway)`,
   );
+}
+
+// Where a floor SITS, in game units — the one thing that can tell floors apart, because
+// the game reports the same (x, y) on every floor of a dungeon and they differ in z alone.
+//
+// Learned from you: stand on a floor, press PageUp/PageDown to name it, and once your
+// height settles it's recorded for this dungeon. From then on your height picks the floor
+// by itself. Averaged over visits, so a second pass sharpens it rather than replacing it.
+function absorbHeight() {
+  const m = tracker.takeHeight();
+  if (!m) return;
+  areas.floorHeights[m.areaKey] = { h: m.h, n: m.n };
+  areaStore.save(areas);
+  pushAreas();
+  const area = areas.areas[m.areaKey];
+  const label = area ? `${area.name} ${area.floor}`.trim() : m.areaKey;
+  console.log(
+    `[areas] ${label} sits at height ${m.h.toFixed(1)} `
+    + `(measured ${m.sample.toFixed(1)}${m.n > 1 ? `, averaged over ${m.n} visits` : ''})`,
+  );
+}
+
+// A floor reached only by STAIRS has no entrance, so no free anchor from a doorway
+// crossing ever lands on it. Left alone it stays uncalibrated forever: the marker simply
+// vanishes when you go up there, and Refine can't rescue it either (Refine SHIFTS an
+// existing transform — there'd be nothing to shift). Every upper floor would be dead.
+//
+// But pressing PageUp/PageDown is an assertion: you just took a stair, so you're standing
+// at the end of it. mapgenie knows where that stair comes out on the destination panel
+// (203 internal portal edges). So the crossing is a free correspondence, exactly like
+// walking in the front door — the same trick, one level down.
+//
+// Which stair? The one whose near side you're standing on. The floor you just LEFT is
+// calibrated (that's how you got here), so inverting ITS transform puts all of its stairs
+// in game coords, and the nearest is the one you took. The chain bootstraps itself:
+// entrance places floor 1, floor 1's stairs place floor 2, and so on.
+function absorbFloorAnchor() {
+  const req = tracker.takeFloorAnchor();
+  if (!req || !areaMeta || !areas.insetLinear) return;
+  const existing = areas.areas[req.areaKey];
+  if (existing && typeof existing.c === 'number') return;  // already placed; nothing to do
+
+  // The stairs on the floor we just left that lead to the one we're now on.
+  const stairs = areaMeta.portals.filter((p) => (
+    p.fromRegion === req.subregionId
+    && p.toRegion === req.subregionId
+    && floorOf(p.fromTitle) === req.fromFloor
+    && floorOf(p.toTitle) === req.toFloor
+  ));
+  if (!stairs.length) {
+    console.log(
+      `[areas] ${req.name} ${req.toFloor} has no transform yet, and mapgenie lists no ` +
+      `stair from ${req.fromFloor || 'this floor'} to it — the marker can't be placed there. ` +
+      'Calibrate it by hand (3-point) while standing on it.',
+    );
+    return;
+  }
+
+  // Pick the stair we actually took: invert the floor we came FROM (it's calibrated —
+  // that's how we got here) to place its stairs in game coords, and take the nearest.
+  const fromAffine = areaStore.affineFor(areas, `${req.subregionId}|${req.fromFloor}`);
+  let best = stairs[0];
+  let bestDist = null;
+  if (fromAffine && stairs.length > 1) {
+    for (const s of stairs) {
+      const g = areaStore.invert(fromAffine, s.fromLng, s.fromLat);
+      if (!g) continue;
+      const d = Math.hypot(req.gameX - g.x, req.gameY - g.y);
+      if (bestDist === null || d < bestDist) { bestDist = d; best = s; }
+    }
+  }
+
+  // You are standing where that stair comes out. Pair it with your world position.
+  const { c, f } = areaStore.solveTranslation(areas.insetLinear, {
+    gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat,
+  });
+  areas.areas[req.areaKey] = {
+    subregionId: req.subregionId,
+    floor: req.toFloor,
+    name: req.name,
+    c,
+    f,
+    auto: true,
+    points: [{ gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat }],
+  };
+  areaStore.save(areas);
+  pushAreas();
+  const via = bestDist === null
+    ? ''
+    : ` (matched the stair you took, ${bestDist.toFixed(0)}u away of ${stairs.length})`;
+  console.log(`[areas] placed "${req.name}" ${req.toFloor} from the stair crossing${via}`);
 }
 
 // Both the main window and the overlay run the same follow loop off this feed.
@@ -244,10 +371,19 @@ function startMemoryPolling() {
       }
       if (!g) return; // both unresolved this tick (e.g. mid-load); skip, keep handle
 
+      // Dungeon zone state: roomHash, insideFlag and zoneIndex all sit in one 32-byte
+      // window, so one read gets all three.
+      const zoneBuf = readMemory(readerHandle, moduleBase + ZONE_WINDOW_OFFSET, ZONE_WINDOW_SIZE);
+      const roomHash = zoneBuf.readInt32LE(0);
+      const insideFlag = zoneBuf.readInt32LE(24);
+      const zoneIndex = zoneBuf.readInt32LE(28);
+
       // Which area are we in? Ticked here rather than in a renderer because both
       // windows need the same answer and neither may disagree with the other.
-      const area = tracker.tick({ x: g.x, y: g.y, height });
+      const area = tracker.tick({ x: g.x, y: g.y, height, insideFlag, zoneIndex, roomHash });
       absorbAnchor();
+      absorbHeight();
+      absorbFloorAnchor();
       const areaKey = area ? area.key : null;
       if (areaKey !== lastAreaKey) {
         lastAreaKey = areaKey;
@@ -309,6 +445,20 @@ function createWindow() {
     // Electron doesn't warn about a leak that isn't one of ours.
     webContents.setMaxListeners(30);
     mainGuest = webContents;
+
+    // The mapgenie guest reloads itself, repeatedly (26 times in one play session),
+    // and each reload wipes the injected marker + found-sync and re-runs the portal
+    // extraction — visible as the map blanking and redrawing while you play. Nothing in
+    // our code reloads it, so this says WHO does: a real navigation, a crash, or the
+    // page choosing to reload. Diagnostic; keep until the cause is nailed down.
+    webContents.on('did-navigate', (_e2, url) => console.log(`[webview nav] -> ${url}`));
+    webContents.on('did-fail-load', (_e2, code, desc, url) => {
+      console.log(`[webview FAILED LOAD] ${code} ${desc} — ${url}`);
+    });
+    webContents.on('render-process-gone', (_e2, details) => {
+      console.log(`[webview CRASHED] ${details.reason} (exit ${details.exitCode})`);
+    });
+    webContents.on('unresponsive', () => console.log('[webview UNRESPONSIVE]'));
     webContents.on('console-message', (_e2, level, message, line, sourceId) => {
       if (message.startsWith(FOUND_PREFIX)) {
         mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
@@ -475,11 +625,19 @@ function registerHotkeys() {
     overlayWindow.send('overlay:zoom-delta', cfg.zoomStep);
   });
 
-  // Manual area override. Auto-detection has two failure modes the player can see
-  // and the app cannot: brushing past a cave mouth without going in, and dropping
-  // through a hole to the floor below without ever touching a portal. These are the
-  // way out of both — not a fallback, a first-class control.
+  // Manual area override. In/out is read straight from the game now, so Insert
+  // should rarely be needed for that — what's still invisible to everything
+  // automatic is dropping through a hole to the floor below without crossing a
+  // portal, since the zone flag doesn't change between floors. Not a fallback for
+  // that case — a first-class control, and the only way the app ever learns where a
+  // floor sits.
+  //
+  // The floor's HEIGHT isn't recorded here: you press the key on the stairs, and the
+  // stairs are between floors. It's taken a moment later, once your height settles —
+  // see areaTracker. What is drained here is the stair crossing, which places a floor
+  // that has no entrance of its own, so the map is right by the time you release the key.
   const announce = (area) => {
+    absorbFloorAnchor();
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
   bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));
@@ -560,7 +718,7 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
 });
 
 // Boolean overlay settings toggled from the control window.
-const SETTING_KEYS = ['autoZoom', 'hideFound'];
+const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
   if (!SETTING_KEYS.includes(key)) return;
   cfg[key] = !!value;
@@ -683,13 +841,7 @@ app.whenReady().then(() => {
   // derived from, and the cached portal graph. The cache means the doorways are live
   // from the first tick, before the mapgenie guest has even finished loading.
   areas = areaStore.load();
-  tracker.setConfig({
-    enterRadius: cfg.enterRadius,
-    rearmMargin: cfg.rearmMargin,
-    rearmDwellTicks: cfg.rearmDwellTicks,
-    outsideDwellTicks: cfg.outsideDwellTicks,
-  });
-  tracker.setAreas(areas);
+  tracker.setHeights(areas.floorHeights);
   tracker.setWorldCalibration(loadCalibration());
   const cachedMeta = configStore.load('mapgenie-areas');
   if (cachedMeta) {

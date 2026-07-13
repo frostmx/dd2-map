@@ -104,10 +104,29 @@ is underground.
 
 `src/main/areaTracker.js` decides which area the player is in. Main owns this (both
 windows must agree, so exactly one may decide) and stamps `areaKey` onto the position
-feed. Detection is by **doorway proximity**, not height — height is continuous
-through a cave mouth and "inside" isn't even reliably lower (towers). Manual
-overrides (`Insert`, `PageUp`/`PageDown`) exist because two failure modes are visible
-to the player and invisible to the app.
+feed.
+
+Three questions, three different answers — all read from one 32-byte window of module-
+static memory (`DD2.exe+FA62C94`, no pointer chain):
+
+- **Whether you're inside** — the game's flag at `+FA62CAC`. 0 = overworld, 1 and 2 both
+  = inside. Authoritative; never height (it's continuous through a cave mouth, and
+  "inside" isn't even reliably lower — towers).
+- **Which dungeon** — the nearest known entrance from mapgenie's portal graph. The game's
+  own dungeon id sits right there at `+FA62CB0`, but it's the *game's* numbering, not
+  mapgenie's, and the mapping doesn't exist yet. `tools/zoneLog.js` is collecting it.
+- **Which floor** — **height**, learned per dungeon into `areas.floorHeights`. This is the
+  only signal that can carry it: the game reports the *same (x, y)* on every floor, so
+  floors differ in z and nothing else. `PageUp`/`PageDown` names a floor, the app measures
+  how high it sits (once your height *settles* — you press the key on the stairs, which
+  belong to no floor), and from then on height picks the floor. Absolute height, never
+  height *change*: real floor gaps run 5.8u–16.6u while height wanders 4u within one floor,
+  so no fixed threshold works. **The room id at `+FA62C94` is NOT a floor** — same hash at
+  h=-13.7 and h=-5.2 — and a learned room→floor table was tried and failed; don't retry it.
+
+`Insert` covers the two dungeons mapgenie has no entrance for. Floor labels sort by
+`floorRank()`, not alphabetically — B1F is *below* 1F — and an unlabelled `''` floor is
+dropped unless it's the only one (it would otherwise be a phantom floor with no panel).
 
 ### Found-mark sync between windows
 

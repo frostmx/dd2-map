@@ -20,8 +20,21 @@ const store = require('./configStore');
 
 const FILE = 'areas';
 
+// `floorHeights` — areaKey -> the height that floor SITS at, in game units, learned from
+// the player asserting the floor with PageUp/PageDown.
+//
+// This is the only thing that can separate floors, and it's worth being explicit about
+// why: the game reports the SAME (x, y) on every floor of a dungeon. Two floors differ
+// in z and in nothing else. So no x/y signal — not the room id, not the portal graph,
+// not the panel geometry — can ever tell them apart, however clever. Height can.
+//
+// Absolute height, not height CHANGE: measured floor gaps run from 5.8u (The Gracious
+// Hand's Vaults) to 16.6u (Forgotten Tunnel), while the height wanders up to 4u WITHIN a
+// single floor. No constant threshold survives both. But once you've stood on a floor and
+// said so, that floor's height is known for that dungeon, and after that your height just
+// picks the nearest one.
 function empty() {
-  return { insetLinear: null, areas: {} };
+  return { insetLinear: null, areas: {}, floorHeights: {} };
 }
 
 function load() {
@@ -30,6 +43,7 @@ function load() {
   return {
     insetLinear: saved.insetLinear || null,
     areas: saved.areas || {},
+    floorHeights: saved.floorHeights || {},
   };
 }
 
@@ -52,6 +66,20 @@ function affineFor(state, areaKey) {
   const lin = state.insetLinear;
   if (!area || !lin || typeof area.c !== 'number') return null;
   return { a: lin.a, b: lin.b, c: area.c, d: lin.d, e: lin.e, f: area.f };
+}
+
+// map lng/lat -> game coords. The mirror of DD2Calib.apply, needed here so a floor whose
+// transform we already have can place ITS OWN features (the stairs leading off it) back
+// in game coordinates — which is how the next floor up gets anchored.
+function invert(affine, lng, lat) {
+  const det = affine.a * affine.e - affine.b * affine.d;
+  if (!Number.isFinite(det) || det === 0) return null;
+  const dl = lng - affine.c;
+  const dt = lat - affine.f;
+  return {
+    x: (affine.e * dl - affine.b * dt) / det,
+    y: (-affine.d * dl + affine.a * dt) / det,
+  };
 }
 
 // --- Deriving insetLinear with no calibration at all --------------------------
@@ -161,5 +189,5 @@ function scaleOf(linear, worldCal) {
 }
 
 module.exports = {
-  load, save, empty, solveTranslation, affineFor, deriveInsetLinear, scaleOf, FILE,
+  load, save, empty, solveTranslation, affineFor, invert, deriveInsetLinear, scaleOf, FILE,
 };
