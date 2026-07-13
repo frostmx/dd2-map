@@ -12,6 +12,7 @@
 //   __dd2_probe()                          -> JSON: canvas alpha, zoom range, layers
 //   __dd2_set_zoom_target(z | null)        drive zoom from the follow loop (overlay)
 //   __dd2_set_basemap_visible(bool)        icons-only mode (overlay)
+//   __dd2_set_rotate(bool)                 heading-up map rotation (overlay)
 //
 // The main window passes no zoom target (it owns its own zoom via the saved-view
 // easeTo glide) and keeps mapgenie's chrome; the overlay drives zoom and strips
@@ -20,6 +21,7 @@
   function buildInstallMarker(opts) {
     const o = opts || {};
     const zoomEase = typeof o.zoomEase === 'number' ? o.zoomEase : 0.12;
+    const rotateEase = typeof o.rotateEase === 'number' ? o.rotateEase : 0.1;
     const hideChrome = !!o.hideChrome;
 
     return `
@@ -27,6 +29,7 @@
     if (window.__dd2_apply) return true;
 
     var ZOOM_EASE = ${zoomEase};
+    var ROT_EASE = ${rotateEase};
     var HIDE_CHROME = ${hideChrome};
 
     // Dot + arrow. The dot IS the position (it sits on the anchor point); the
@@ -54,18 +57,34 @@
       return m;
     }
 
-    // Heading from the movement vector, in SCREEN space.
+    // Shortest way round: -180..180, so crossing due-west never spins the long way.
+    function angleDiff(target, cur) {
+      return ((target - cur + 540) % 360) - 180;
+    }
+
+    // Heading from the movement vector, in WORLD space (degrees CW from east, i.e.
+    // north = -90 — the frame the marker's SVG rotate() speaks).
     //
     // It has to be derived from the WORLD delta projected to pixels, not from the
     // marker's pixel movement: under locked-center follow the marker never moves
     // on screen (the map moves under it), so a pixel-delta heading would always
     // read zero. Projecting two world points with the current camera gives a
-    // vector that's correct at any zoom and would survive a rotated map.
+    // vector that's correct at any zoom.
+    //
+    // The + getBearing() is LOAD-BEARING, and only looks redundant while the map
+    // is north-up. project() reports SCREEN pixels, so in heading-up mode the
+    // frame we measure the heading in is the very thing the heading rotates:
+    // without the term, the map turns, the projected delta swings back toward
+    // "up", the heading collapses toward north and the bearing chases its own
+    // tail. Mapbox's bearing is the compass direction drawn "up", so a world
+    // direction of azimuth c lands on screen at atan2(dy,dx) = c - 90 - bearing;
+    // adding the bearing back cancels the camera and leaves a heading that is
+    // camera-independent, which is the only kind you can safely feed back into it.
     //
     // prev only advances once the vector clears a few pixels, so slow walking
     // still accumulates a heading instead of being lost to per-frame noise. The
-    // last heading is held while you stand still — the arrow keeps pointing where
-    // you were last going, rather than snapping to some arbitrary direction.
+    // last heading is held while you stand still — the map/arrow keeps pointing
+    // where you were last going, rather than snapping to some arbitrary direction.
     function updateHeading(d) {
       var prev = window.__dd2_prev_ll__;
       if (!prev) { window.__dd2_prev_ll__ = { lng: d.lng, lat: d.lat }; return; }
@@ -76,11 +95,9 @@
       var dy = b.y - a.y;
       if (dx * dx + dy * dy < 9) return; // < 3px of travel: not a direction yet
 
-      var target = Math.atan2(dy, dx) * 180 / Math.PI; // SVG rotate: CW+, screen y down
+      var target = Math.atan2(dy, dx) * 180 / Math.PI + window.map.getBearing();
       var cur = (typeof window.__dd2_heading__ === 'number') ? window.__dd2_heading__ : target;
-      // Shortest way round, so crossing due-west doesn't spin the arrow the long way.
-      var diff = ((target - cur + 540) % 360) - 180;
-      window.__dd2_heading__ = cur + diff * 0.25;
+      window.__dd2_heading__ = cur + angleDiff(target, cur) * 0.25;
       window.__dd2_prev_ll__ = { lng: d.lng, lat: d.lat };
     }
 
@@ -296,6 +313,21 @@
       window.__dd2_zoom_target__ = (typeof z === 'number' && isFinite(z)) ? z : null;
     };
 
+    // --- Heading-up ---------------------------------------------------------
+    // Overlay only: rotate the map so the way you're running is UP, instead of
+    // making you translate "arrow points north-east" into "turn left a bit".
+    //
+    // __dd2_rotate_active__ is a separate flag, not just !!on, because it must
+    // survive being switched off: the loop keeps owning the bearing until it has
+    // eased back to north, then lets go. It is the ONLY thing that lets the loop
+    // touch the bearing at all — the main window never calls this, so its map is
+    // never rotated and, just as importantly, a bearing the USER dialed in there
+    // by hand is never snapped back to north by the follow loop.
+    window.__dd2_set_rotate = function(on) {
+      window.__dd2_rotate__ = !!on;
+      if (on) window.__dd2_rotate_active__ = true;
+    };
+
     // 60fps loop that owns the marker, the camera and the zoom from one smoothed
     // display position (disp). When following, it centers the map on disp AND
     // draws the marker on disp, so the marker sits at the exact viewport center
@@ -336,6 +368,29 @@
       // Skip the per-frame center lock while a zoom glide is animating, so the
       // easeTo (which drives center + zoom together) isn't overwritten each frame.
       if (driving && !window.__dd2_zoom_gliding__) {
+        // Heading-up: one bearing step per frame, eased off the map's REAL bearing
+        // rather than a remembered one. Nothing can drift out of sync with the
+        // camera, and a bearing you dialed in by hand during an Alt-drag is simply
+        // where we resume easing from instead of something to fight.
+        var rotating = !!window.__dd2_rotate_active__;
+        var bearing = window.map.getBearing();
+        if (rotating) {
+          var wantB = 0; // rotation off: unwind to north, THEN let go of the bearing
+          if (window.__dd2_rotate__) {
+            wantB = (typeof window.__dd2_heading__ === 'number')
+              ? window.__dd2_heading__ + 90 // world heading is CW from east; bearing is CW from north
+              : bearing;                    // no heading yet (never moved): hold, don't snap north
+          }
+          var dB = angleDiff(wantB, bearing);
+          bearing = Math.abs(dB) < 0.02 ? wantB : bearing + dB * ROT_EASE;
+        }
+
+        // Center, zoom and bearing ride the SAME jumpTo: Mapbox re-runs symbol
+        // placement per camera move, so a second setBearing() call would double
+        // the icon churn the fade throttle above exists to contain.
+        var move = { center: { lng: d.lng, lat: d.lat } };
+        if (rotating) move.bearing = bearing;
+
         var zt = window.__dd2_zoom_target__;
         if (typeof zt === 'number') {
           // Overlay: ease zoom toward the target and move center + zoom in ONE
@@ -345,13 +400,21 @@
           }
           window.__dd2_disp_zoom__ += (zt - window.__dd2_disp_zoom__) * ZOOM_EASE;
           if (Math.abs(zt - window.__dd2_disp_zoom__) < 1e-4) window.__dd2_disp_zoom__ = zt;
-          window.map.jumpTo({ center: { lng: d.lng, lat: d.lat }, zoom: window.__dd2_disp_zoom__ });
+          move.zoom = window.__dd2_disp_zoom__;
+          window.map.jumpTo(move);
         } else {
           // Main window: center only; zoom is the user's business.
           var c = window.map.getCenter();
           if (Math.abs(c.lng - d.lng) > 1e-9 || Math.abs(c.lat - d.lat) > 1e-9) {
-            window.map.jumpTo({ center: { lng: d.lng, lat: d.lat } });
+            window.map.jumpTo(move);
           }
+        }
+
+        // Let go of the bearing only once north has actually been written back —
+        // clearing the flag on the frame we DECIDE to stop would leave the map
+        // parked at the last fraction of a degree.
+        if (rotating && !window.__dd2_rotate__ && bearing === 0) {
+          window.__dd2_rotate_active__ = false;
         }
       }
       var el = document.getElementById('__dd2_player_marker__');
@@ -363,7 +426,12 @@
         updateHeading(d);
         var g = document.getElementById('__dd2_marker_rot__');
         if (g && typeof window.__dd2_heading__ === 'number') {
-          g.setAttribute('transform', 'rotate(' + window.__dd2_heading__.toFixed(1) + ' 22 22)');
+          // The heading is in world space, the SVG lives on screen: subtracting the
+          // bearing converts one to the other. North-up leaves it exactly as it was;
+          // settled heading-up lands on -90, i.e. the arrow points straight up, and
+          // mid-turn it shows the part of the turn the map hasn't caught up with yet.
+          var rot = window.__dd2_heading__ - window.map.getBearing();
+          g.setAttribute('transform', 'rotate(' + rot.toFixed(1) + ' 22 22)');
         }
       }
     }

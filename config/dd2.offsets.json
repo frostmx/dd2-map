@@ -59,5 +59,57 @@
   "backupCandidate": {
     "structBase": "0x3b8c4b10",
     "note": "Also validated (camera-rotation-invariant, real X/Z movement tracking, height stays flat on flat ground) — likely another duplicate copy of the same player position. Not currently used; kept as a fallback if 0x47a55e10 stops resolving."
+  },
+  "dungeonZoneIndex": {
+    "note": "Found via CE value-scanning (2026-07-13). insideFlag is WIRED INTO THE APP (src/main/index.js, src/main/areaTracker.js) and replaced the doorway-proximity guess for the in/out decision. zoneIndex is NOT yet usable — see its note. Module-static, no pointer chain (same category of read as staticLocalPosition), so expected restart-stable by construction; the user observed both values unchanged across a full game restart. Not yet tested across a DD2 game-version update.",
+    "insideFlag": {
+      "staticOffset": "0x0FA62CAC",
+      "type": "4 Bytes (int32)",
+      "values": {
+        "0": "overworld — CONFIRMED live 2026-07-13 (was only presumed before)",
+        "1": "inside a dungeon",
+        "2": "ALSO inside (user-observed) — some second kind of interior; what distinguishes it from 1 is not yet known. Both non-zero values are treated as 'inside'; tools/zoneLog.js is collecting the data to find out what 2 actually is."
+      },
+      "note": "Does not change between dungeon floors. Persists across full game restart. This is what the app keys 'am I inside' on. LAGS THE MAP: it does not flip the instant the in-game map changes — a walk out of a cave showed the map already switched while the flag still read 1. It settles once you are properly out. Don't conclude from one sample that it's stale (we did, briefly, and were wrong)."
+    },
+    "zoneIndex": {
+      "staticOffset": "0x0FA62CB0",
+      "type": "4 Bytes (int32)",
+      "note": "The GAME's own dungeon id. NOT mapgenie's numbering — mapgenie's subregion ids run 2441-2514, while observed game ids are 18, 69, 2010. The two do not coincide and a mapping table has to be BUILT. Until one exists, zoneIndex cannot name a dungeon and the app instead picks the NEAREST KNOWN ENTRANCE from mapgenie's portal graph. Run tools/zoneLog.js while playing: it pairs (insideFlag, zoneIndex) with the nearest entrance's name on every transition, which is exactly the table needed. Once complete, 'which dungeon' becomes a lookup, stops depending on the world affine, and reaches the two dungeons mapgenie has no entrance for.",
+      "overworldValue": "-1 (0xFFFFFFFF), NOT 0 — a sentinel. Confirmed live 2026-07-13.",
+      "keyOn": "(insideFlag, zoneIndex) TOGETHER, not zoneIndex alone — the flag appears to select an id namespace: flag-1 ids are small (18, 69), the one flag-2 id seen is four digits (2010).",
+      "measured": [
+        { "flag": 1, "zone": 18, "dungeon": "Forgotten Tunnel", "mapgenieSubregion": 2447 },
+        { "flag": 2, "zone": 2010, "dungeon": "Stormwind Cave", "mapgenieSubregion": 2460 },
+        { "flag": 1, "zone": 69, "dungeon": "Stragglers' Cave", "mapgenieSubregion": 2443 }
+      ],
+      "status": "COLLECTING — 3 of ~74. See zone_log.txt (gitignored) and tools/zoneLog.js"
+    },
+    "roomHash": {
+      "staticOffset": "0x0FA62C94",
+      "relativeToInsideFlag": -24,
+      "type": "4 Bytes (int32 / hash)",
+      "note": "WIRED INTO THE APP (areaTracker.js) as the key to the learned floor table. A stable id for the ROOM/section you're standing in: -1 (0xFFFFFFFF) in the overworld; inside, it changes as you move between sections (8 rooms in one walk through Forgotten Tunnel). NOT a floor — it changes far more often, so a room change must never be treated as a floor change. But it IS deterministic: walking a cave one way and back gave the identical five hashes in reverse order (9e1f3458, 11e21904, 93438736, 5ec54b5f, 8e0b2c2c), so the same physical room yields the same hash across visits and across sessions. That makes it usable as a LEARNED KEY: PageUp/PageDown records the current room against the floor you set, in areas.json's `rooms` map, and a revisit sets the floor exactly with no geometry. Each room needs correcting at most once, ever.",
+      "usedFor": "areas.rooms — the roomHash -> areaKey lookup table"
+    },
+    "unknownFloat12": {
+      "staticOffset": "0x0FA62CB8",
+      "relativeToInsideFlag": 12,
+      "type": "float",
+      "note": "0.0 in the overworld; inside a dungeon it wanders (0.46-0.75 observed) rather than stepping. Not an index. Logged by zoneLog.js in case it turns out to mean something; a blend/fog/darkness factor is the obvious guess."
+    },
+    "pointerChainCandidates": {
+      "note": "Cheat Engine pointer scan surfaced multiple heap chains all resolving to 14FA62CB0 — redundant now that the target is known to be a plain module-static address (moduleBase + 0xFA62CB0 = 0x14FA62CB0 for a typical 0x140000000 load base), so none of these are needed or were validated. Kept only as a record of what CE found.",
+      "candidates": [
+        { "base": "0x0996CE48", "offsets": ["0x1C0"] },
+        { "base": "0x09987360", "offsets": ["0x1C8"] },
+        { "base": "0x099872F0", "offsets": ["0x6C8"] },
+        { "base": "0x09987B8", "offsets": ["0xADC"] },
+        { "base": "0x0987248", "offsets": ["0xB0C"] },
+        { "base": "0x0996F490", "offsets": ["0xB38"] },
+        { "base": "0x0996C198", "offsets": ["0xBB0"] },
+        { "base": "0x099871D8", "offsets": ["0xBE8"] }
+      ]
+    }
   }
 }

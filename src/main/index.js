@@ -55,6 +55,24 @@ const GLOBAL_Y_OFFSET = 0x8n;
 const LOCAL_MIRROR_OFFSET = 0x0fa65f70n;
 const CELL = 128;
 
+// Dungeon zone state, straight from the game — no pointer chain, same kind of read as
+// the local mirror above. Found by CE value-scanning (2026-07-13; see
+// config/dd2.offsets.json). Three fields we care about, so one read covers them all:
+//
+//   -24  roomHash    -1 outside; inside, a STABLE id for the room you're standing in
+//                    (same room = same hash, across visits and across sessions)
+//     0  insideFlag   0 = overworld; 1 and 2 both = inside (2 is some other kind of
+//                     interior — seen in Stormwind Cave; both mean inside, so it
+//                     doesn't matter which)
+//    +4  zoneIndex    the game's own dungeon id. NOT mapgenie's numbering (game: 18,
+//                     69, 2010; mapgenie subregions: 2441-2514), so it can't name a
+//                     dungeon yet — see tools/zoneLog.js.
+//
+// insideFlag replaces guessing entry/exit from proximity to a doorway position derived
+// from the world affine. roomHash is the key to the learned floor table (areas.rooms).
+const ZONE_WINDOW_OFFSET = 0x0fa62c94n;  // roomHash; insideFlag at +24, zoneIndex at +28
+const ZONE_WINDOW_SIZE = 32;
+
 const CALIB_PREFIX = '__DD2_CALIB__';
 const FOUND_PREFIX = '__DD2_FOUND__';
 
@@ -118,7 +136,7 @@ let areaMeta = null;                 // mapgenie's region/portal graph
 let lastAreaKey = null;              // for edge detection on the broadcast
 
 function pushAreas() {
-  tracker.setAreas(areas);  // the tracker's containment backstop reads these
+  tracker.setRooms(areas.rooms);   // the learned roomHash -> floor table
   broadcast('areas:state', areas);
 }
 
@@ -182,14 +200,54 @@ function absorbAnchor() {
   };
   areaStore.save(areas);
   pushAreas();
-  // The closest approach is the number that matters, and it is NOT the distance the
-  // doorway fired at — that one is always just under enterRadius by construction (the
-  // rule triggers on the tick you cross into the radius), so it says nothing about
-  // how near the doorway you really got. This is what sets how far off the auto
-  // placement starts, and therefore how big a Refine shift you'd have to make.
+  // How far the player was from the nearest KNOWN doorway at the instant the game's
+  // own zone flag said "you're in here" — not a detection radius any more, just how
+  // far off this anchor (and therefore the auto placement) is likely to be. Sets how
+  // big a Refine shift you'd need if it looks off.
   console.log(
     `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
-    `(closest approach to the doorway: ${anchor.dist.toFixed(1)}u)`,
+    `(${anchor.dist.toFixed(1)}u from the nearest known doorway)`,
+  );
+}
+
+// The game gives us a stable id for the room you're standing in, but nothing that says
+// which FLOOR that room is on — and a room change is NOT a floor change (one walk
+// through Forgotten Tunnel crossed 8 rooms across 2 floors), so it can't be inferred.
+//
+// So it's learned instead. Every time you set the floor by hand, the room you were in
+// is recorded against it. Walk into that room again — next week, next session — and the
+// floor is set exactly, from the table, with no geometry involved. Each room needs
+// correcting at most once, ever, and the dungeon becomes deterministic as you explore it.
+function absorbRoom() {
+  const learned = tracker.takeRoom();
+  if (!learned) return;
+  areas.rooms[learned.room] = learned.areaKey;
+  areaStore.save(areas);
+  pushAreas();
+  const area = areas.areas[learned.areaKey];
+  const where = area ? `${area.name} ${area.floor}`.trim() : learned.areaKey;
+  console.log(`[areas] learned: room ${learned.room} is on ${where} — it won't need telling again`);
+}
+
+// "You may have changed floor." Advice, never an action — the tracker deliberately did
+// NOT move you. A big height change across a room boundary is what a staircase looks
+// like, but it's also what a long ramp or a deep shaft inside one floor looks like, so
+// acting on it would silently teleport the marker to the wrong panel often enough to be
+// worse than useless.
+//
+// It's here for the case nothing else can catch: DROPPING THROUGH A HOLE to the floor
+// below. No portal, no prompt, and you might not even notice — the map would just be
+// quietly wrong. This tells you, you press PageUp/PageDown, and that both fixes it and
+// teaches the room, so it never asks again.
+function absorbFloorHint() {
+  const hint = tracker.takeFloorHint();
+  if (!hint) return;
+  const dir = hint.dh < 0 ? 'DOWN' : 'UP';
+  const key = hint.dh < 0 ? cfg.hotkeys.floorDown : cfg.hotkeys.floorUp;
+  console.log(
+    `[areas] you moved ${Math.abs(hint.dh).toFixed(0)}u ${dir} into a new room (${hint.room}) — ` +
+    `if that was a floor change (a staircase, or a hole you fell through), press ${key}. ` +
+    'It will remember this room and stop asking.',
   );
 }
 
@@ -244,10 +302,19 @@ function startMemoryPolling() {
       }
       if (!g) return; // both unresolved this tick (e.g. mid-load); skip, keep handle
 
+      // Dungeon zone state: roomHash, insideFlag and zoneIndex all sit in one 32-byte
+      // window, so one read gets all three.
+      const zoneBuf = readMemory(readerHandle, moduleBase + ZONE_WINDOW_OFFSET, ZONE_WINDOW_SIZE);
+      const roomHash = zoneBuf.readInt32LE(0);
+      const insideFlag = zoneBuf.readInt32LE(24);
+      const zoneIndex = zoneBuf.readInt32LE(28);
+
       // Which area are we in? Ticked here rather than in a renderer because both
       // windows need the same answer and neither may disagree with the other.
-      const area = tracker.tick({ x: g.x, y: g.y, height });
+      const area = tracker.tick({ x: g.x, y: g.y, height, insideFlag, zoneIndex, roomHash });
       absorbAnchor();
+      absorbRoom();
+      absorbFloorHint();
       const areaKey = area ? area.key : null;
       if (areaKey !== lastAreaKey) {
         lastAreaKey = areaKey;
@@ -475,10 +542,11 @@ function registerHotkeys() {
     overlayWindow.send('overlay:zoom-delta', cfg.zoomStep);
   });
 
-  // Manual area override. Auto-detection has two failure modes the player can see
-  // and the app cannot: brushing past a cave mouth without going in, and dropping
-  // through a hole to the floor below without ever touching a portal. These are the
-  // way out of both — not a fallback, a first-class control.
+  // Manual area override. In/out is read straight from the game now, so Insert
+  // should rarely be needed for that — what's still invisible to everything
+  // automatic is dropping through a hole to the floor below without crossing a
+  // portal, since the zone flag doesn't change between floors. Not a fallback for
+  // that case — a first-class control.
   const announce = (area) => {
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
@@ -560,7 +628,7 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
 });
 
 // Boolean overlay settings toggled from the control window.
-const SETTING_KEYS = ['autoZoom', 'hideFound'];
+const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
   if (!SETTING_KEYS.includes(key)) return;
   cfg[key] = !!value;
@@ -683,13 +751,7 @@ app.whenReady().then(() => {
   // derived from, and the cached portal graph. The cache means the doorways are live
   // from the first tick, before the mapgenie guest has even finished loading.
   areas = areaStore.load();
-  tracker.setConfig({
-    enterRadius: cfg.enterRadius,
-    rearmMargin: cfg.rearmMargin,
-    rearmDwellTicks: cfg.rearmDwellTicks,
-    outsideDwellTicks: cfg.outsideDwellTicks,
-  });
-  tracker.setAreas(areas);
+  tracker.setRooms(areas.rooms);
   tracker.setWorldCalibration(loadCalibration());
   const cachedMeta = configStore.load('mapgenie-areas');
   if (cachedMeta) {

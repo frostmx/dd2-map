@@ -104,10 +104,24 @@ is underground.
 
 `src/main/areaTracker.js` decides which area the player is in. Main owns this (both
 windows must agree, so exactly one may decide) and stamps `areaKey` onto the position
-feed. Detection is by **doorway proximity**, not height — height is continuous
-through a cave mouth and "inside" isn't even reliably lower (towers). Manual
-overrides (`Insert`, `PageUp`/`PageDown`) exist because two failure modes are visible
-to the player and invisible to the app.
+feed.
+
+Three questions, three different answers — all read from one 32-byte window of module-
+static memory (`DD2.exe+FA62C94`, no pointer chain):
+
+- **Whether you're inside** — the game's flag at `+FA62CAC`. 0 = overworld, 1 and 2 both
+  = inside. Authoritative; never height (it's continuous through a cave mouth, and
+  "inside" isn't even reliably lower — towers).
+- **Which dungeon** — the nearest known entrance from mapgenie's portal graph. The game's
+  own dungeon id sits right there at `+FA62CB0`, but it's the *game's* numbering, not
+  mapgenie's, and the mapping doesn't exist yet. `tools/zoneLog.js` is collecting it.
+- **Which floor** — a **learned** table, `areas.rooms`. The game gives a stable id for the
+  ROOM you're in (`+FA62C94`), but a room is not a floor (8 rooms across 2 floors in one
+  cave), so it is never inferred from. Instead `PageUp`/`PageDown` records the current
+  room against the floor you set, and a revisit reads the floor straight out of the table.
+
+`Insert` covers the two dungeons mapgenie has no entrance for. Floor labels sort by
+`floorRank()`, not alphabetically — B1F is *below* 1F.
 
 ### Found-mark sync between windows
 

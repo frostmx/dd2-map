@@ -11,35 +11,13 @@ const DEFAULTS = {
     baseMap: 'F9',
     zoomOut: 'F10',
     zoomIn: 'F11',
-    // Manual area override. Entering a dungeon is detected from the doorway, which
-    // cannot catch every case: brushing past a cave mouth flips the map, and
-    // dropping through a hole to the floor below never touches a portal at all.
+    // Manual area override. In/out is read straight from the game (see
+    // areaTracker.js), so this is mainly for the one thing that isn't: dropping
+    // through a hole to the floor below without ever crossing a portal.
     areaToggle: 'Insert',
     floorUp: 'PageUp',
     floorDown: 'PageDown',
   },
-
-  // Game units, for the doorway detector (src/main/areaTracker.js). enterRadius has
-  // to absorb the world affine's own fit error too, since the doorways' game coords
-  // are derived from it — so it is a knob, not a constant.
-  // How close to a doorway counts as going through it. 10 is what it should be: at 15
-  // the map flipped noticeably BEFORE you reached the entrance, which reads as the
-  // app jumping the gun. (It was briefly raised to 15 to chase missed entries — but
-  // those turned out to be the re-arm latch below, not the radius, so the radius went
-  // back.)
-  enterRadius: 10,
-
-  // Re-arming the doorway takes BOTH: at least rearmMargin units beyond enterRadius,
-  // held for rearmDwellTicks (at 30Hz). A big distance alone broke re-entry (you never
-  // get 20-40 units clear of a cave mouth before turning back, so walking in again did
-  // nothing); a bare dwell alone strobed (idling across the edge re-armed every half
-  // second). Small band + dwell does the latch's actual job and nothing more.
-  rearmMargin: 5,
-  rearmDwellTicks: 15,
-  // How long (in 30Hz ticks) you must map outside a dungeon's own inset panel before
-  // the app concludes you left it without using the doorway. The doorway rule alone
-  // misses a wide exit path; this is the backstop.
-  outsideDwellTicks: 20,
 
   // The overlay always comes up ICONS-ONLY: that's the mode you actually play with,
   // and it shouldn't depend on what you happened to leave it on last time. F9 brings
@@ -61,6 +39,21 @@ const DEFAULTS = {
   // into orbit. 1.4 levels ≈ 2.6x wider.
   runZoomOut: 1.4,
   zoomEase: 0.12,      // per-frame lerp toward the zoom target; higher = snappier
+
+  // Heading-up: rotate the overlay's map so the way you're RUNNING is up, instead
+  // of leaving you to work out which way to turn so the arrow ends up on the POI.
+  // Off by default — north-up is what a map normally means, and heading-up is a
+  // taste. There's no facing angle in DD2's memory, so the heading comes from the
+  // movement vector: it holds its last direction while you stand still, and it
+  // will happily turn the map around if you run backwards.
+  // The control window is never rotated (clicking calibration landmarks on a
+  // spinning map is miserable).
+  rotateWithHeading: false,
+  // Per-frame lerp toward the heading; higher = snappier. The heading itself is
+  // already smoothed, so this stacks on top: 0.1 settles a turn in roughly half a
+  // second. Push it up if the map feels like it's lagging behind you, down if a
+  // wall-slide or a dodge makes it wobble.
+  rotateEase: 0.1,
 
   // Speed hysteresis, in game units/sec, with a dwell on each edge.
   // The dwell timer survives the dead band between the two speeds and only resets

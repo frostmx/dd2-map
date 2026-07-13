@@ -23,6 +23,7 @@ config/mapgenie-areas.json
 *.csv
 app_log*.txt
 watch*.txt
+zone_log.txt
 chains*.json
 ct_*
 z_*

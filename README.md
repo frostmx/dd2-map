@@ -48,6 +48,13 @@ The marker is a **dot with an arrow**: the dot is your position, the arrow point
 where you're heading. There's no facing angle in memory, so the heading comes from
 your movement vector — it holds its last direction while you stand still.
 
+**Rotate to heading is off by default.** Tick it in the control window and the
+overlay's map turns so the way you're *running* is up: a POI drawn above the marker
+is then simply straight ahead, instead of you working out which way to turn so the
+arrow ends up on it. The arrow just points up, and the map eases round as you turn
+(`rotateEase` in the config: higher = snappier). Since the heading is your movement
+vector, running backwards turns the map around. The control window stays north-up.
+
 **Holding Alt briefly focuses the overlay, so DD2 loses focus for as long as you
 hold it.** That's not incidental, and it's why the mouse works at all: DD2 pins the
 cursor to screen centre and only releases it when it loses focus, so there is no way
@@ -119,9 +126,15 @@ coordinates inside one, and without this the marker would sit out at the cave mo
 while the cave's POIs sat far away in the inset. **1,227 of the 5,354 POIs (23%) live
 in those insets.**
 
-The app reads mapgenie's own portal graph — every entrance names its destination
-outright — so it knows where all 131 cave mouths are and which inset each leads to.
-Walk through one and the map follows you in.
+**Whether** you're inside is read straight out of the game's memory — it keeps a flag,
+so there's no guessing and no radius to tune. **Which** dungeon comes from mapgenie's
+own portal graph: it knows where all 131 cave mouths are and which inset each leads to,
+so the one you're standing nearest when the flag flips is the one you walked into. That
+same entrance hands the dungeon a free calibration point on the way in.
+
+(The game also keeps its own dungeon *id*, which would name the dungeon outright — but
+it's the game's numbering, not mapgenie's, and the mapping between them doesn't exist
+yet. `tools/zoneLog.js` is how it gets built; see `FINDINGS.md`.)
 
 **You have to do one thing, once.** Every inset is drawn at the same scale, so all of
 them share one transform apart from an offset — and walking through a doorway supplies
@@ -143,18 +156,14 @@ Ruins** and **Sealed Mining Shaft** — so they need `Insert` and a manual calib
 
 ### When it guesses wrong
 
-Detection keys off the doorway, which can't catch everything: brushing past a cave
-mouth may flip the map, and you can drop through a hole to the floor below without ever
-touching a portal. So the override is a real control, not a fallback:
+In/out comes from the game, so that shouldn't need correcting. Two things are still
+invisible to it, and the override is a real control for them, not a fallback:
 
-- `Insert` — force in / out
-- `PageUp` / `PageDown` — force a floor change
-
-Tuning lives in `config/overlay.json`: `enterRadius` (how close to a doorway counts as
-going through it, default 10 game units), `rearmRadius` (how far clear you must get
-before it can fire again, 30), and `outsideDwellTicks` (how long you must map outside a
-dungeon's own panel before the app decides you left without using the door, 20 ticks
-≈ 0.7s).
+- `PageUp` / `PageDown` — force a **floor change**. The flag doesn't change between
+  floors, so dropping through a hole to the level below is invisible to everything
+  automatic.
+- `Insert` — force in / out. Mainly for the two dungeons with no entrance in mapgenie's
+  data, where "nearest entrance" has nothing right to pick.
 
 ## Building a portable .exe
 

@@ -245,6 +245,14 @@ function applyHideFound() {
   runInWebview(`window.__dd2_set_hide_found && window.__dd2_set_hide_found(${!!cfg.hideFound})`);
 }
 
+// Heading-up: rotate the map so the way you're running is up, so a POI drawn above
+// the marker is genuinely ahead of you. The guest owns the easing; this just says
+// which way it should be. Overlay only — the control window is never rotated.
+function applyRotate() {
+  if (!cfg) return;
+  runInWebview(`window.__dd2_set_rotate && window.__dd2_set_rotate(${!!cfg.rotateWithHeading})`);
+}
+
 function applyBaseMap(visible) {
   baseMapVisible = visible;
   if (!cfg) return; // hotkey beat the config load; state is kept, applied on boot
@@ -268,6 +276,7 @@ window.dd2overlay.onCommand('overlay:setting', ({ key, value }) => {
   if (!cfg) return;
   cfg[key] = value;
   if (key === 'hideFound') applyHideFound();
+  if (key === 'rotateWithHeading') applyRotate();
   if (key === 'autoZoom') {
     // Turning it off mid-run must not strand the map zoomed out — drop the run
     // state and glide straight back to the base zoom.
@@ -321,15 +330,18 @@ window.dd2overlay.onGamePosition((data) => {
   if (!markerInstalled) {
     runInWebview(window.DD2MapAgent.buildInstallMarker({
       zoomEase: cfg.zoomEase,
+      rotateEase: cfg.rotateEase,
       hideChrome: true,
     }));
     markerInstalled = true;
-    // A mapgenie SPA navigation wipes the guest context, taking icons-only mode
-    // and the brightness filter with it. Re-assert both on every re-injection, or
-    // the base map would silently come back mid-session (and come back glaring).
+    // A mapgenie SPA navigation wipes the guest context, taking icons-only mode,
+    // the brightness filter and heading-up with it. Re-assert them all on every
+    // re-injection, or the base map would silently come back mid-session (and come
+    // back glaring), and the map would quietly drop back to north-up.
     if (!baseMapVisible) applyBaseMap(false);
     else applyBrightness();
     applyHideFound();
+    applyRotate();
   }
   probeOnce();
 

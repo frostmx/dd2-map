@@ -20,8 +20,13 @@ const store = require('./configStore');
 
 const FILE = 'areas';
 
+// `rooms` — the learned roomHash -> areaKey table. See areaTracker: the game hands us a
+// stable id for the room you're standing in, but nothing that says which FLOOR that
+// room is on. Every time you set the floor by hand, the room you were in is recorded
+// here — so the same room never has to be corrected twice, and a revisit sets the floor
+// exactly, with no geometry involved at all.
 function empty() {
-  return { insetLinear: null, areas: {} };
+  return { insetLinear: null, areas: {}, rooms: {} };
 }
 
 function load() {
@@ -30,6 +35,7 @@ function load() {
   return {
     insetLinear: saved.insetLinear || null,
     areas: saved.areas || {},
+    rooms: saved.rooms || {},
   };
 }
 

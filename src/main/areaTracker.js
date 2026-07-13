@@ -8,58 +8,62 @@
 // area you're in is what lets the renderer swap to that inset's transform, which
 // flies the camera to where the POIs already are.
 //
-// WHAT WE CANNOT USE: height. Measured in-game, and it was the assumption this was
-// originally designed around, so it's worth being explicit about why it's gone:
-//   - entering a cave produces NO step change in height — the coordinate is
-//     continuous straight through the doorway;
-//   - "inside" is not even reliably LOWER. A tower's interior climbs above its own
-//     entrance.
-// So there is no height band that separates inside from outside, and any z-gate
-// would misfire on towers. The only trustworthy signal left is the doorway itself.
+// TWO QUESTIONS, TWO DIFFERENT ANSWERS:
 //
-// WHAT WE USE INSTEAD: mapgenie states every portal's destination outright, by
-// location id, in its description (see mapAgent.buildExtractAreas). Inverting the
-// world affine puts each overworld entrance at a known point in GAME coordinates.
-// Walking within a few units of one means you went through it — and because the
-// same doorway is both the way in and the way out, one proximity rule drives both:
+// 1. AM I INSIDE? — the game tells us, so we don't guess. A module-static int (no
+//    pointer chain; same kind of read as the local-position mirror), found by CE
+//    value-scanning, 2026-07-13:
 //
-//   pass close to a doorway  ->  swap to the other side of it
+//      DD2.exe+FA62CAC  insideFlag  0 = overworld, 1 and 2 = inside a dungeon
 //
-// Re-arming only once you're well clear of the doorway is what stops it strobing
-// while you stand in it. This does mean brushing past a cave mouth without entering
-// will flip the map; that's what the manual override (Insert) is for, and it's why
-// the override exists rather than being a fallback.
-
-const DEFAULTS = {
-  // Game units. Coming within this of an entrance means you are in the doorway.
-  // Deliberately configurable — it also has to absorb the world affine's own fit
-  // error, since the doorway positions are derived from it. 15 was too eager: the map
-  // flipped visibly before you reached the entrance.
-  enterRadius: 10,
-
-  // Re-arming the doorway takes BOTH of these: you must be at least rearmMargin units
-  // beyond enterRadius, and stay there for rearmDwellTicks (at 30Hz).
-  //
-  // It used to be a big distance alone (you had to get 20-40 units clear), and that
-  // broke re-entry outright: you don't get that far from a cave mouth before turning
-  // round, so walking back into a cave you just left did nothing and needed a forced
-  // Insert. Live play showed it at 40 and again at 20.
-  //
-  // A dwell alone doesn't work either, though — it strobes. Mill around a doorway and
-  // you drift in and out across enterRadius; each exit re-arms after half a second and
-  // the next step back in fires again. (Simulated at enterRadius 10: 16 flips.)
-  //
-  // So: a SMALL band plus a dwell. The band means idling around an entrance never
-  // counts as having left it; the dwell means a brief clip past the edge doesn't
-  // either. Together they're enough to stop the strobe while still re-arming the
-  // moment you genuinely step outside — which is all the latch was ever for.
-  rearmMargin: 5,
-  rearmDwellTicks: 15,
-
-  // Ticks (at 30Hz) the player must map outside the dungeon's inset panel before we
-  // conclude they left without using the doorway. ~0.7s.
-  outsideDwellTicks: 20,
-};
+//    (1 and 2 are both "inside" — observed. What distinguishes them isn't known yet;
+//    some second kind of interior. Since both mean inside, nothing here needs to
+//    care, and tools/zoneLog.js is collecting the data to find out.)
+//
+//    This replaced a doorway-proximity guess — "you're within N units of a portal
+//    position we derived by inverting the world affine, so you must have crossed
+//    it". That guess inherited the world affine's fit error, needed a radius plus a
+//    re-arm band plus a dwell to stop it strobing in a doorway, and could never see
+//    the two dungeons that have no portal entrance in mapgenie's data at all.
+//
+// 2. WHICH DUNGEON? — the NEAREST KNOWN ENTRANCE, from mapgenie's portal graph.
+//    There is a second static int next to the flag:
+//
+//      DD2.exe+FA62CB0  zoneIndex   the game's own dungeon id
+//
+//    ...but it is the GAME's numbering, not mapgenie's, and the two do not coincide:
+//    mapgenie's subregion ids run 2441-2514, while an observed zoneIndex was 18. A
+//    mapping between them would have to be BUILT, dungeon by dungeon, and until it
+//    exists zoneIndex cannot name a dungeon. So the flag says when to jump, and the
+//    nearest entrance says where to jump to. (See tools/zoneLog.js — it logs
+//    zoneIndex against the nearest entrance's name on every transition, which is
+//    exactly the table needed. Once it's complete, "which dungeon" becomes a lookup
+//    and stops depending on the world affine at all.)
+//
+// WHAT WE STILL CANNOT USE: height, to tell inside from outside. Entering a cave
+// produces no step change in it, and "inside" isn't even reliably lower — a tower's
+// interior climbs above its own entrance.
+//
+// 3. WHICH FLOOR? — nothing in memory says. The flag holds the same value across a
+//    dungeon's floors, and so does zoneIndex. But there IS a third int in the struct:
+//
+//      DD2.exe+FA62C94  roomHash   -1 in the overworld; inside, a stable id for the
+//                                  room/section you're standing in
+//
+//    It is NOT a floor: it changes far more often (8 distinct rooms in a single walk
+//    through Forgotten Tunnel). Treating a room change as a floor change would be
+//    wrong most of the time. But it IS deterministic — the same physical room gives
+//    the same hash across visits and across sessions (verified: walking a cave one way
+//    and back gave the identical five hashes in reverse order).
+//
+//    So it is used as a LEARNED KEY, not as a signal. The floor is set by hand
+//    (PageUp/PageDown), and when you do, the room you were standing in is recorded
+//    against that floor in `areas.rooms`. Walk into that room again — this session or
+//    any future one — and the floor is set exactly, from the table, with no geometry
+//    and no guessing. Each room needs correcting at most once, ever.
+//
+//    Nothing is ever inferred from an unknown room: if we don't know where a room is,
+//    we hold the current floor rather than guess at one.
 
 // "Waterfall Cave 1F" -> "1F". mapgenie names the floor in the destination POI's
 // title and nowhere else, so this is the only place a floor label comes from.
@@ -69,45 +73,82 @@ function floorOf(title) {
   return m ? m[1].toUpperCase() : '';
 }
 
+// Floors have to be ordered by ELEVATION, not alphabetically — the B ("basement")
+// prefix means below ground, so B1F sits UNDER 1F. Sorting the labels as strings gives
+// ['1F', 'B1F'], and then PageUp from B1F walks off the end of the list and silently
+// does nothing. (Which is exactly what it did; a simulation against the real Forgotten
+// Tunnel data caught it.)
+function floorRank(floor) {
+  const m = /^(B?)(\d+)F$/i.exec(floor || '');
+  if (!m) return 0;                                     // '' — a single-floor dungeon
+  const n = parseInt(m[2], 10);
+  return m[1] ? -n : n;                                 // B1F -> -1, 1F -> +1, 2F -> +2
+}
+
 function keyOf(subregionId, floor) {
   return `${subregionId}|${floor}`;
 }
 
 function createTracker() {
-  let cfg = { ...DEFAULTS };
   let meta = null;          // the extracted mapgenie graph
-  let worldCal = null;      // the overworld affine, for placing entrances
-  let areas = null;         // the solved inset transforms, for the containment check
-  let overworldIds = new Set();
-  let outsideTicks = 0;     // consecutive ticks mapped outside the current inset
+  let worldCal = null;      // the overworld affine, for placing entrances in game coords
+  let rooms = {};           // the learned roomHash -> areaKey table (from areas.json)
 
-  let doors = [];           // overworld-side entrances, in GAME coords
-  let floorsBySub = new Map();  // subregionId -> ordered floor labels
+  let doors = [];               // every known overworld-side entrance, in GAME coords
+  let floorsBySub = new Map();  // subregionId -> ordered floor labels, for PageUp/PageDown
 
   let current = null;       // null = overworld; else { key, subregionId, floor, name }
-  let armed = true;         // can a doorway fire right now?
-  let clearTicks = 0;       // consecutive ticks spent outside enterRadius
   let lastPos = null;
-  let lastNear = null;      // nearest doorway + distance, published for the readout
+  let lastNear = null;      // nearest known doorway + distance, for the readout
+  let lastRoom = null;      // the roomHash we last acted on
 
-  // Set when a doorway is crossed: the correspondence that calibrates the area we
-  // just walked into. The player's position at the doorway IS the destination POI's
-  // spot on the inset, so the pair is a free anchor — no clicking required.
-  //
-  // It is NOT taken at the instant the doorway fires. Firing happens anywhere within
-  // enterRadius, so that position can be a full enterRadius off the actual doorway —
-  // and at inset scale (the insets are drawn several times larger than the world)
-  // that error is magnified into a visible one. Instead the anchor tracks the
-  // player's CLOSEST approach to the doorway and is only handed over once they've
-  // moved past it, which pins it as tightly as the data allows.
+  // The insideFlag `current` was last derived from. Tracked separately from `current`
+  // itself so a manual override (Insert / PageUp / PageDown) sticks: it isn't
+  // overwritten every tick just because the raw flag is unchanged from the value that
+  // produced it. Treated as a boolean — 1 and 2 both mean inside.
+  let syncedInside = null;
+
+  // Set on entry: the correspondence that calibrates the dungeon we just walked into.
+  // The player's position at the moment the game says "you're inside" IS (near enough)
+  // the entrance POI's spot on the inset, so the pair is a free anchor — no clicking.
   let pendingAnchor = null;
-  let anchorReady = false;
-  let anchorTicks = 0;
 
-  // Belt and braces: if you enter and then just STAND in the doorway, "moved past
-  // it" never happens and the dungeon would never calibrate. Give up waiting for a
-  // better position after ~2s at 30Hz and use the best one seen.
-  const ANCHOR_MAX_TICKS = 60;
+  // Set when a manual floor change teaches us where a room is. Drained by main, which
+  // owns areas.json and is the only thing allowed to write it.
+  let pendingRoom = null;
+
+  // A SUGGESTION that the floor may have changed — never an action. Raised when you
+  // enter an unknown room having gained or lost a lot of height since the last room
+  // change. That is what a staircase looks like, but it is also what a long ramp or a
+  // deep shaft inside ONE floor looks like, so it is far too fragile to act on: a wrong
+  // automatic floor change silently teleports the marker to the wrong panel, which is
+  // worse than not moving it at all.
+  //
+  // It earns its place for the case nothing else covers — DROPPING THROUGH A HOLE to
+  // the floor below. There's no portal, no transition prompt, and you may not even
+  // notice it happened; the map would just quietly be wrong. This says so, and you
+  // press PageDown, which both fixes it and teaches the room. Advice, then a decision
+  // that's still yours.
+  const FLOOR_HINT_HEIGHT = 12;   // game units of height change across one room change
+  let roomEntryHeight = null;     // height when the current room was entered
+  let floorHint = null;           // { dh } — drained by main for the log
+
+  // Why the area last changed. Surfaced so the log can say WHY, not just what.
+  let lastReason = null;
+
+  // A roomHash is only meaningful inside; -1 (0xFFFFFFFF) is the overworld sentinel.
+  const validRoom = (r) => Number.isInteger(r) && r !== -1;
+  const roomKey = (r) => (r >>> 0).toString(16).padStart(8, '0');
+
+  // Remember: this room is on this floor. Called when you set the floor by hand — the
+  // only moment we actually know the answer.
+  function learnRoom(room, areaKey) {
+    if (!validRoom(room) || !areaKey) return;
+    const k = roomKey(room);
+    if (rooms[k] === areaKey) return;   // already known, don't churn the file
+    rooms[k] = areaKey;
+    pendingRoom = { room: k, areaKey };
+  }
 
   function invertWorld(lng, lat) {
     const c = worldCal;
@@ -122,14 +163,19 @@ function createTracker() {
     };
   }
 
-  // Overworld doorways, placed in game coords. Rebuilt whenever the metadata or the
-  // world affine changes — the affine is what puts them there, so a Refine moves
-  // every doorway with it.
+  // The known overworld entrances, placed in game coords. Rebuilt whenever the
+  // metadata or the world affine changes — the affine is what puts them there, so a
+  // Refine moves every one of them.
+  //
+  // These no longer DETECT anything (the game's flag does that). They answer "which
+  // dungeon did I just walk into", which is a different and much more forgiving job:
+  // the nearest entrance only has to be nearer than the next-nearest, so the affine's
+  // fit error would have to be enormous to pick the wrong cave.
   function rebuild() {
     doors = [];
     floorsBySub = new Map();
     if (!meta) return;
-    overworldIds = new Set(meta.overworldRegionIds);
+    const overworldIds = new Set(meta.overworldRegionIds);
 
     // Every floor of every dungeon, so PageUp/PageDown has an ordered list to walk
     // even for floors that have never been visited.
@@ -140,7 +186,7 @@ function createTracker() {
       if (!floors.includes(f)) floors.push(f);
       floorsBySub.set(p.toRegion, floors);
     }
-    for (const floors of floorsBySub.values()) floors.sort();
+    for (const floors of floorsBySub.values()) floors.sort((x, y) => floorRank(x) - floorRank(y));
 
     if (!worldCal) return;
     for (const p of meta.portals) {
@@ -172,187 +218,142 @@ function createTracker() {
     return best ? { door: best, dist: bestDist } : null;
   }
 
-  function enter(door, pos, dist) {
+  // The game says we're inside. Which dungeon? Whichever entrance we're standing
+  // closest to. Hands over the free calibration anchor at the same time, since the
+  // entrance we matched is also the one whose inset arrival point we know.
+  function enterNearest(pos, reason) {
+    const near = nearestDoor(pos);
+    if (!near) return;   // no portal graph yet — stay in the overworld rather than guess
+    const d = near.door;
     current = {
-      key: keyOf(door.subregionId, door.floor),
-      subregionId: door.subregionId,
-      floor: door.floor,
-      name: door.name,
+      key: keyOf(d.subregionId, d.floor),
+      subregionId: d.subregionId,
+      floor: d.floor,
+      name: d.name,
     };
-    // The free anchor: we are at the doorway, and the doorway's inset counterpart is
-    // exactly where mapgenie says this portal comes out. Seeded here, then sharpened
-    // as we get closer (see refineAnchor).
     pendingAnchor = {
       areaKey: current.key,
-      subregionId: door.subregionId,
-      floor: door.floor,
-      name: door.name,
+      subregionId: d.subregionId,
+      floor: d.floor,
+      name: d.name,
       gameX: pos.x,
       gameY: pos.y,
-      lng: door.toLng,
-      lat: door.toLat,
-      dist,
+      lng: d.toLng,
+      lat: d.toLat,
+      dist: near.dist,
     };
-    anchorReady = false;
-    anchorTicks = 0;
-  }
-
-  // Keep the anchor at the player's closest approach to the doorway, and hand it
-  // over once they've moved past it (or stood there long enough that they clearly
-  // aren't going to get any closer).
-  function refineAnchor(dist, pos) {
-    if (!pendingAnchor || anchorReady) return;
-    anchorTicks += 1;
-    if (dist < pendingAnchor.dist) {
-      pendingAnchor.dist = dist;
-      pendingAnchor.gameX = pos.x;
-      pendingAnchor.gameY = pos.y;
-    }
-    if (dist > cfg.enterRadius || anchorTicks >= ANCHOR_MAX_TICKS) anchorReady = true;
-  }
-
-  // Why an area change happened. The two rules fail in opposite ways — the doorway
-  // can fire when you merely brush past a cave mouth, and the containment backstop
-  // can eject you from a cave you're standing in if the inset scale is off enough to
-  // map you outside the panel. Those need completely different fixes, so the log has
-  // to say which one it was.
-  let lastReason = null;
-
-  function leave(reason) {
-    current = null;
-    outsideTicks = 0;
-    lastReason = reason;
-  }
-
-  // Have we left the dungeon WITHOUT going back through its doorway?
-  //
-  // The doorway rule alone is too brittle to be the only way out. It needs the
-  // player to pass within enterRadius of a point we DERIVED from the world affine,
-  // so it inherits that affine's error, and a slightly wide exit path simply misses
-  // it — leaving the map stuck in the inset while you stand in daylight. (Measured:
-  // an exit path passing 13 units from the doorway never fires.)
-  //
-  // So check containment as well. Run the player through the current area's
-  // transform and see whether they land inside the inset panel that mapgenie drew
-  // for this dungeon. This is a strong signal precisely because the insets are drawn
-  // several times larger than the world: once you're actually outside the cave, the
-  // magnification throws you far outside the panel, not marginally.
-  //
-  // Needs the dungeon to be calibrated, so it can't be the only rule either — an
-  // uncalibrated dungeon still relies on the doorway. The two cover each other.
-  function outsideInset(pos) {
-    if (!current || !areas || !areas.insetLinear || !meta) return false;
-    const area = areas.areas && areas.areas[current.key];
-    if (!area || typeof area.c !== 'number') return false;
-    const sub = meta.subregions[current.subregionId];
-    if (!sub || !sub.bbox) return false;
-
-    const lin = areas.insetLinear;
-    const lng = lin.a * pos.x + lin.b * pos.y + area.c;
-    const lat = lin.d * pos.x + lin.e * pos.y + area.f;
-
-    const [x0, y0, x1, y1] = sub.bbox;
-    // The panel already contains the whole dungeon by construction — mapgenie drew it
-    // to fit — so anywhere inside the cave maps inside the bbox and the margin only
-    // needs to absorb anchor error and the panel's own padding. Keep it small: it
-    // sets how far past the exit you walk before the map lets go, and a large margin
-    // (0.5 of the panel) meant ~270 game units of standing in daylight looking at a
-    // cave map.
-    const mx = (x1 - x0) * 0.15;
-    const my = (y1 - y0) * 0.15;
-    return lng < x0 - mx || lng > x1 + mx || lat < y0 - my || lat > y1 + my;
+    // The distance is worth saying out loud: it is how far the entrance we CHOSE was
+    // from where you actually stood when the game said you were inside. Small is
+    // reassuring. Large means either you entered a dungeon with no entrance in
+    // mapgenie's data (there are two), or the world affine has drifted — and those
+    // need different fixes.
+    lastReason = `${reason} — nearest entrance "${d.name}" ${near.dist.toFixed(1)}u away`;
   }
 
   return {
-    setConfig(next) {
-      cfg = { ...DEFAULTS, ...(next || {}) };
-    },
     setMetadata(next) {
       meta = next;
       rebuild();
     },
     setWorldCalibration(next) {
       worldCal = next;
-      rebuild();  // the doorways' game coords are derived from this affine
+      rebuild();  // the entrances' game coords are derived from this affine
     },
-    // The solved inset transforms. Only used for the containment backstop above —
-    // the tracker never writes them.
-    setAreas(next) {
-      areas = next;
+    // The learned roomHash -> areaKey table, from areas.json.
+    setRooms(next) {
+      rooms = next || {};
     },
 
-    // Called every poll tick. Returns the active area (null = overworld).
+    // Called every poll tick with { x, y, height, insideFlag, zoneIndex, roomHash }.
+    // Returns the active area (null = overworld).
     tick(pos) {
       lastPos = pos;
-      if (!doors.length) return current;
-
       const near = nearestDoor(pos);
-      if (!near) return current;
-      lastNear = { name: near.door.name, dist: near.dist };
+      if (near) lastNear = { name: near.door.name, dist: near.dist };
 
-      // Re-arm: a small band beyond the radius, held for a moment. Neither half works
-      // alone — a big distance breaks re-entry, a bare dwell strobes when you idle
-      // across the edge. See DEFAULTS.
-      if (near.dist > cfg.enterRadius + cfg.rearmMargin) {
-        clearTicks += 1;
-        if (clearTicks >= cfg.rearmDwellTicks) armed = true;
-      } else {
-        clearTicks = 0;
-      }
-
-      if (armed && near.dist <= cfg.enterRadius) {
-        armed = false;
-        // The same doorway both ways: if we're already inside the dungeon this door
-        // belongs to, we're on our way out; otherwise we're on our way in.
-        if (current && current.subregionId === near.door.subregionId) {
-          leave(`through the doorway (${near.dist.toFixed(1)}u from it)`);
+      // 0 = overworld; anything else (1 or 2 observed) = inside. Both non-zero values
+      // mean inside, so the only edge that matters is zero <-> non-zero.
+      const inside = pos.insideFlag !== 0;
+      if (inside !== syncedInside) {
+        syncedInside = inside;
+        if (inside) {
+          enterNearest(pos, `the game says you're inside (flag ${pos.insideFlag})`);
+          // The entrance told us the floor, and we know the room we arrived in — so
+          // that room is now known, for free, without you doing anything.
+          if (current) learnRoom(pos.roomHash, current.key);
         } else {
-          enter(near.door, pos, near.dist);
-          lastReason = `through the doorway (${near.dist.toFixed(1)}u from it)`;
+          current = null;
+          lastReason = 'the game says you\'re in the overworld (flag 0)';
         }
+        lastRoom = pos.roomHash;
+        roomEntryHeight = pos.height;
         return current;
       }
 
-      refineAnchor(near.dist, pos);
+      // Same side of the door as last tick. The only thing left that can change the
+      // area is walking into a room we've been taught the floor of.
+      if (!current || pos.roomHash === lastRoom) return current;
 
-      // Backstop for an exit that missed the doorway: if we're mapping well outside
-      // the dungeon's own inset panel, we are plainly not in it any more. Dwelled, so
-      // a moment of bad geometry can't kick us out of a cave we're standing in.
-      if (current) {
-        outsideTicks = outsideInset(pos) ? outsideTicks + 1 : 0;
-        if (outsideTicks >= cfg.outsideDwellTicks) {
-          // If this fires while you are genuinely still in the cave, the inset scale
-          // is wrong — it is mapping you off the edge of the panel. Say so loudly:
-          // the fix is a 3-point measurement, not a tweak to this rule.
-          leave(`MAPPED OUTSIDE the inset panel (${near.dist.toFixed(0)}u from the doorway) ` +
-                '— if you were still inside, the inset scale is off; measure it with the 3-point flow');
-        }
+      // How much height did we gain or lose crossing out of the last room? A staircase
+      // between floors shows up here as a big number.
+      const dh = roomEntryHeight === null ? 0 : pos.height - roomEntryHeight;
+      lastRoom = pos.roomHash;
+      roomEntryHeight = pos.height;
+      if (!validRoom(pos.roomHash)) return current;
+
+      const known = rooms[roomKey(pos.roomHash)];
+      if (known && known !== current.key) {
+        const floor = known.split('|')[1] || '';
+        current = { ...current, floor, key: known };
+        lastReason = `room ${roomKey(pos.roomHash)} is on ${floor || 'this floor'} (learned)`;
+        return current;
+      }
+      if (known) return current;   // known, and it's the floor we're already on
+
+      // An unknown room. It tells us nothing on its own — a room change is NOT a floor
+      // change (one walk through Forgotten Tunnel crossed 8 rooms across 2 floors), so
+      // inferring from it would be wrong far more often than right. Hold the floor we're
+      // on. But if we also moved a long way vertically, SAY so: that's what a staircase
+      // looks like, and more importantly it's the only trace left by falling through a
+      // hole, which no portal and no table can catch.
+      if (Math.abs(dh) >= FLOOR_HINT_HEIGHT) {
+        floorHint = { dh, room: roomKey(pos.roomHash) };
       }
       return current;
     },
 
     // --- Manual overrides ----------------------------------------------------
-    // Auto-detection has two failure modes the player can see and the app cannot:
-    // brushing past a cave mouth without going in, and dropping through a hole to
-    // the floor below without ever touching a portal. Rather than pretend those
-    // away, hand over the controls.
+    // In/out comes from the game now, so Insert should rarely be needed for that. Two
+    // things are still invisible to everything automatic, and this is what they're
+    // for: a FLOOR change that doesn't cross a portal (dropping through a hole — the
+    // flag doesn't change between floors), and the two dungeons with no entrance in
+    // mapgenie's data at all, where "nearest entrance" has nothing right to pick.
+    //
+    // Setting the area by hand also syncs the flag state to the CURRENT reading, so
+    // the next tick's automatic path sees no edge and doesn't immediately fight it.
 
-    // Insert: force in/out. In the overworld this enters the nearest dungeon
-    // regardless of distance, so it also works as "I'm in here, the app missed it".
     toggle() {
-      if (current) { leave('Insert'); armed = false; return current; }
       if (!lastPos) return current;
-      const near = nearestDoor(lastPos);
-      if (!near) return current;
-      enter(near.door, lastPos, near.dist);
-      lastReason = `Insert (nearest doorway ${near.dist.toFixed(0)}u away)`;
-      armed = false;
+      if (current) {
+        current = null;
+        lastReason = 'Insert';
+      } else {
+        enterNearest(lastPos, 'Insert');
+        if (current) learnRoom(lastPos.roomHash, current.key);
+      }
+      syncedInside = lastPos.insideFlag !== 0;
+      lastRoom = lastPos.roomHash;
       return current;
     },
 
-    // PageUp / PageDown: step a floor. No anchor comes with this — you asked for it,
-    // so we trust it — which means an unvisited floor lands uncalibrated and says so
-    // rather than guessing where you are.
+    // PageUp / PageDown: step a floor. No anchor comes with this — you asked for it, so
+    // we trust it — which means an unvisited floor lands uncalibrated and says so rather
+    // than guessing where you are.
+    //
+    // But it is not JUST an override. It is how the roomHash table gets taught: you are
+    // standing in a room, and you have just told us which floor that room is on. That
+    // is the one moment we actually know. Recorded, so this room — and therefore this
+    // spot in this dungeon — is never wrong again, in this session or any future one.
     stepFloor(delta) {
       if (!current) return current;
       const floors = floorsBySub.get(current.subregionId) || [];
@@ -361,33 +362,44 @@ function createTracker() {
       const next = floors[i + delta];
       if (next === undefined) return current;  // already at the top/bottom floor
       current = { ...current, floor: next, key: keyOf(current.subregionId, next) };
+      if (lastPos) learnRoom(lastPos.roomHash, current.key);
       return current;
     },
 
-    // Drains the anchor from the last crossing — but only once it has settled on the
-    // player's closest approach to the doorway (see refineAnchor). Returns null
-    // while it's still sharpening.
+    // Drains the anchor from the last entry, if there was an entrance to anchor on.
     takeAnchor() {
-      if (!pendingAnchor || !anchorReady) return null;
+      if (!pendingAnchor) return null;
       const a = pendingAnchor;
       pendingAnchor = null;
-      anchorReady = false;
       return a;
     },
 
+    // Drains a newly learned roomHash -> areaKey pair, so main can persist it. Main owns
+    // areas.json; the tracker never writes it.
+    takeRoom() {
+      if (!pendingRoom) return null;
+      const r = pendingRoom;
+      pendingRoom = null;
+      return r;
+    },
+
+    // Drains a "you might have changed floor" suggestion. Advice only — the tracker has
+    // already declined to act on it.
+    takeFloorHint() {
+      if (!floorHint) return null;
+      const h = floorHint;
+      floorHint = null;
+      return h;
+    },
+
     current: () => current,
-    // Why the area last changed. The two auto rules fail in opposite ways and need
-    // opposite fixes, so this is not decoration — it's how you tell a doorway
-    // misfire from the inset scale being wrong.
     reason: () => lastReason,
-    // Nearest doorway and how far off it is, in game units. Published on the
-    // position feed purely so the control window can show it: it's what tells you
-    // whether enterRadius is set sensibly, and the doorways inherit the world
-    // affine's fit error, so that number is worth being able to see.
+    // Nearest known entrance and how far off it is, in game units. Published on the
+    // position feed for the control window's readout.
     near: () => lastNear,
     floorsOf: (subregionId) => floorsBySub.get(subregionId) || [],
     doorCount: () => doors.length,
   };
 }
 
-module.exports = { createTracker, floorOf, keyOf, DEFAULTS };
+module.exports = { createTracker, floorOf, floorRank, keyOf };

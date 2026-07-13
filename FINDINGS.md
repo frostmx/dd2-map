@@ -18,7 +18,8 @@ dd2-map/
     overlayWindow.js  # the transparent, click-through, always-on-top overlay window
     overlayConfig.js  # overlay settings + defaults
     configStore.js    # config/<name>.json load/save (userData when packaged)
-    areaTracker.js    # which area you're in: doorway proximity + inset containment
+    areaTracker.js    # which area you're in: the game's own inside-flag, plus the
+                      #   nearest known entrance to say WHICH dungeon
     areaStore.js      # config/areas.json: the shared inset linear part + per-dungeon
                       #   translations. Main is its ONLY writer (see below).
   src/renderer/
@@ -40,6 +41,8 @@ dd2-map/
     findCellIndex.js, verifyCellIndex.js, watch.js, globalWatch.js, ctLogger.js,
     ctSnapshot.js, readCtAddresses.js, readStatic.js, compareStatic.js,
     analyzeRebase.js, probeMapLib.js, smokeTest.js
+    zoneLog.js                # logs the game's (insideFlag, zoneIndex) against the
+                              #   nearest mapgenie entrance — builds the id mapping
     ce_find_pointer.lua       # Cheat Engine: "find what writes" -> struct base
     global.chains{,2}.json    # the validated pointer chains these produced
 ```
@@ -149,6 +152,44 @@ original capture, a reload, AND a full restart — a deterministic singleton
     Mapbox symbol churn) is impractical: heavy per-frame cost and it throws away
     mapgenie's POI interactivity (click, tooltip, category/preset filters,
     found-state). So locked-center with mild icon wobble is the accepted state.
+- **Heading-up map rotation** (`cfg.rotateWithHeading`, overlay only, off by
+  default). Turns the map so the direction you're RUNNING is up, which is the whole
+  point: "the POI is above the marker" then means "run straight on", instead of you
+  translating "arrow points north-east" into "turn left a bit". There is no facing
+  angle in memory, so the heading is still the movement vector — it holds its last
+  direction while you stand still, and it will turn the map around if you run
+  backwards. Three things here are not rediscoverable from the code:
+  - **The heading has to be measured in WORLD space, and it wasn't.** `updateHeading`
+    gets its angle from `map.project()`, i.e. SCREEN pixels — which is fine only
+    while the map is north-up. Feed that straight into the bearing and the frame you
+    measure in *is* the thing you rotate: the map turns, the projected delta swings
+    back toward "up", the heading collapses toward north and the bearing chases its
+    own tail (a slow spin, or oscillation). The fix is one term — `atan2(dy,dx) +
+    map.getBearing()`. Mapbox's bearing is the compass direction drawn "up", so a
+    world direction of azimuth `c` lands on screen at `c - 90 - bearing`; adding the
+    bearing back cancels the camera. Keep `__dd2_heading__` camera-independent and
+    everything else falls out: target bearing = `heading + 90`, and the marker's SVG
+    rotate = `heading - bearing` (which is *exactly* the old value at bearing 0, and
+    -90 — straight up — once heading-up settles).
+  - **The bearing is eased off `map.getBearing()`, not off remembered state.** A
+    smoothed `disp_bearing` of our own would need resyncing every time the user
+    hand-rotates during an Alt-drag, and its unwrapped value drifts from Mapbox's
+    normalized ±180. Easing from the map's real bearing each frame is self-correcting
+    and needs neither.
+  - **`__dd2_rotate_active__` is a separate flag from `__dd2_rotate__`**, and it has
+    to be. It keeps the loop owning the bearing while it eases back to north after
+    you switch rotation off (otherwise the map just stays stuck at an angle), and —
+    more importantly — it is the only thing that lets the loop write a bearing at
+    all. `followFrame` runs in BOTH windows; a condition like "unwind whenever the
+    bearing isn't 0" would have the follow loop snap the CONTROL window's map back to
+    north the moment you right-drag-rotated it by hand. The control window never
+    calls `__dd2_set_rotate`, so it never touches the bearing.
+  - The bearing rides the existing per-frame `jumpTo` (with center and zoom). A
+    separate `setBearing()` would be a second Mapbox "move" per frame and double the
+    symbol churn the 80ms fade throttle above exists to contain.
+  - Verifiable without the game: drive the built guest script against a mock Mapbox
+    whose `project()` models bearing, run a straight line on each compass heading,
+    and assert the bearing settles on the run direction and the arrow on -90.
 - **Live coord readout** in the control panel (`local` vs `world`), a **Follow
   player** checkbox, the overlay's settings (opacity/brightness sliders, auto-zoom,
   hide-found), and a **Refine** message reporting the correction in game X/Y units.
@@ -469,27 +510,125 @@ down so nobody rebuilds it:
 So there is no height band separating inside from outside, and any z-gate misfires on
 towers. Height is still read and broadcast, but nothing keys off it.
 
-### What we detect on instead: the doorway, plus a containment backstop
+### What we detect on: the game's flag for WHETHER, the nearest entrance for WHICH
 
-1. **Doorway.** Inverting the world affine (`DD2Calib.invert`) puts each of the 131
-   entrances at a known point in GAME coordinates. Come within `enterRadius` (10 units,
-   measured) and you've gone through it. The *same* doorway is both the way in and the
-   way out, so one rule drives both; re-arming only once you're `rearmRadius` (30 units)
-   clear is what stops it strobing while you stand in the entrance.
-2. **Containment backstop.** The doorway rule alone is too brittle to be the only way
-   out: it needs you to pass within 10 units of a point *derived* from the world affine,
-   so it inherits that affine's error, and a slightly wide exit path simply misses it —
-   leaving the map stuck in an inset while you stand in daylight. (Simulated: an exit
-   path passing **13 units** from the doorway never fires.) So we also run the player
-   through the current area's transform and check they still land inside the inset
-   panel mapgenie drew. Strong signal precisely *because* insets are drawn several
-   times larger than the world: once genuinely outside, the magnification throws you
-   far out of the panel. Needs the dungeon calibrated, so it can't be the only rule
-   either — the two cover each other.
-3. **Manual override** (`Insert` in/out, `PageUp`/`PageDown` floor). Not a fallback —
-   a first-class control. Two failure modes are visible to the player and invisible to
-   the app: brushing past a cave mouth without going in, and **dropping through a hole
-   to the floor below without ever touching a portal**.
+Two questions, and they get different answers.
+
+**1. Am I inside? The game tells us.** Found by CE value-scanning (2026-07-13); a
+module-static int, **no pointer chain** (same kind of read as the local-position mirror,
+so restart-stable by construction):
+
+```
+DD2.exe+FA62CAC   insideFlag   0 = overworld,  1 and 2 = inside a dungeon
+```
+
+Both non-zero values mean inside (user-observed) — 2 is some *second kind* of interior,
+and what distinguishes it from 1 isn't known yet. Since both mean inside, nothing in the
+app needs to care; `tools/zoneLog.js` is collecting the data to find out what it is.
+
+**It lags the in-game map**, and this cost us a wrong conclusion worth recording. Walking
+out of a cave, the game's own map had already switched back to the overworld while the
+flag still read `1` — sampled there, it looks like a dead value that never updates, and
+we briefly concluded it was a stale copy (which this project has a real precedent for —
+see the teleport lesson under `globalPosition`). It isn't. It settles once you are
+properly outside. **Don't judge it mid-transition.**
+
+The struct around it, read live: `+4` (`zoneIndex`) is **`-1`, not `0`**, in the
+overworld — a sentinel. `-24` is a **room hash** (see below). `+12` is a float, 0.0
+outside and wandering 0.46–0.75 inside; unknown, probably a blend/fog factor.
+
+This **replaced a doorway-proximity guess**: invert the world affine to place each
+entrance in game coordinates, and treat coming within `enterRadius` of one as having
+crossed it, with a containment backstop (do I still map inside the inset panel?) for
+exits that missed the radius. It worked, but it inherited the world affine's fit error,
+needed a radius *plus* a re-arm band *plus* a dwell to stop it strobing when you idled in
+a doorway (three tries to get right — see the git log), and structurally could never see
+the two dungeons with no portal entrance in mapgenie's data. All of that is now deleted:
+`enterRadius`, `rearmMargin`, `rearmDwellTicks`, `outsideDwellTicks` and the containment
+check are gone.
+
+**2. Which dungeon? The nearest known entrance.** There is a second static int beside the
+flag:
+
+```
+DD2.exe+FA62CB0   zoneIndex    the GAME's own dungeon id
+```
+
+It is tempting to read this as "the dungeon", and it very nearly is — but it is the
+**game's** numbering, and mapgenie's is different: mapgenie's subregion ids run
+**2441–2514**, while an observed `zoneIndex` was **18**. They do not coincide, so
+`zoneIndex` cannot name a dungeon until a **mapping table is built**, dungeon by dungeon.
+
+Until then: the flag says *when* to jump into an inset, and the **nearest known entrance**
+(from mapgenie's portal graph) says *which* one. That's a far more forgiving job than
+detection was — the nearest entrance only has to be nearer than the next-nearest, so the
+affine's error would have to be enormous to pick the wrong cave — but it still depends on
+the affine, and it still can't reach the two orphan dungeons.
+
+Note the id must be keyed on `(insideFlag, zoneIndex)`, **not zoneIndex alone**: the flag
+appears to select an id *namespace*. Measured so far —
+
+| flag | zone | dungeon | mapgenie subregion | matched at |
+|---|---|---|---|---|
+| 1 | 18 | Forgotten Tunnel | 2447 | 28u |
+| 2 | 2010 | Stormwind Cave | 2460 | 13u |
+| 1 | 69 | Stragglers' Cave | 2443 | 7u |
+
+flag-1 ids are small (18, 69); the one flag-2 id is four digits (2010). "Nearest entrance"
+picked correctly all three times.
+
+**`tools/zoneLog.js` exists to finish this.** Run it while playing; on every change of
+zone state it appends a line pairing `(insideFlag, zoneIndex)` with the nearest mapgenie
+entrance's name and how far away it was. Only the CLOSE lines are usable — a line logged
+deep inside a dungeon pairs a zone number with whatever entrance happened to be nearest,
+which may be a different cave entirely. Visit enough dungeons and the mapping falls out.
+
+The free-anchor calibration trick (below) is unaffected: entry still hands over the
+player's world position paired with the matched entrance's inset position.
+
+### 3. Which floor? A LEARNED table, keyed on the game's room id
+
+Nothing in memory says which floor you're on — the inside flag and the zone index both
+hold steady across a dungeon's floors. But there is a third int in the struct:
+
+```
+DD2.exe+FA62C94   roomHash   -1 in the overworld; inside, an id for the room you're in
+```
+
+**It is not a floor**, and this is the trap to avoid: it changes far more often. One walk
+through Forgotten Tunnel crossed **8 rooms across 2 floors**. Treating a room change as a
+floor change would be wrong most of the time, and a wrong automatic floor change silently
+teleports the marker to the wrong panel — worse than not moving it at all.
+
+**But it is deterministic.** Walking that cave one way and back gave the identical five
+hashes in reverse order (`9e1f3458 11e21904 93438736 5ec54b5f 8e0b2c2c` →
+`8e0b2c2c 5ec54b5f 93438736 11e21904 9e1f3458`). The same physical room gives the same
+hash, across visits and across sessions.
+
+So it's a **key, not a signal**. The floor is set by hand (`PageUp`/`PageDown`), and doing
+so records the room you were standing in against that floor, in `areas.rooms`. Walk into
+that room again — next session, next month — and the floor is set exactly from the table,
+with no geometry and no guessing. **A room needs correcting at most once, ever**, and only
+one room per floor actually needs it (the floor carries forward until a *known* room says
+otherwise). Verified in simulation against the real Forgotten Tunnel log: first visit, one
+`PageUp`; second visit, zero input.
+
+An unknown room infers nothing — the current floor is held. Never guessed.
+
+**The height hint.** On entering an *unknown* room having gained/lost ≥12u since the last
+room change, the app says so and suggests the hotkey. Advice, not an action: that's what a
+staircase looks like, but so is a long ramp or a deep shaft within one floor. It exists
+for the one case nothing else can catch — **falling through a hole to the floor below**,
+where there's no portal, no prompt, and you might not even notice the map went wrong.
+
+**Floors must be ordered by ELEVATION, not alphabetically.** `B` = basement, so B1F sits
+*under* 1F, and a string sort gives `['1F', 'B1F']` — which made `PageUp` from B1F walk off
+the end of the list and silently do nothing. Caught by simulating the tracker against the
+real log; `floorRank()` exists for this (`B1F → -1`, `1F → +1`).
+
+**Manual override** (`Insert` in/out, `PageUp`/`PageDown` floor) remains, and now earns
+its keep on exactly two things the automatic path can't do: **the floor** (as above), and
+the **two orphan dungeons**, where "nearest entrance" has nothing right to pick.
 
 ### Calibration is free, because a crossing IS a correspondence
 
@@ -528,28 +667,31 @@ re-extracted on every launch).
 
 ### Not done yet (dungeons)
 
-**1. Transit detector: fire on passing THROUGH a doorway, not on nearing it.**
-The doorway currently fires on **proximity** — cross into `enterRadius` and it flips.
-That's why brushing past a cave mouth can flip the map, and it's the only reason
-`rearmMargin` + `rearmDwellTicks` exist: they're there to stop idling near an entrance
-from strobing, and getting them right took three tries (a big distance broke re-entry;
-a bare dwell strobed; see the tuning history in the git log).
+**1. The game↔mapgenie dungeon-id mapping (`tools/zoneLog.js` is collecting it).**
+`DD2.exe+FA62CB0` holds the game's own dungeon id, but it is not mapgenie's numbering
+(game: 18 observed; mapgenie subregions: 2441–2514). Building the table would let the
+game name the dungeon outright instead of us picking the nearest entrance — which would
+drop the last dependence on the world affine and reach the two orphan dungeons below.
 
-Track the **radial direction** to the nearest doorway instead — distance decreasing,
-then increasing, means you actually went *through* it. Then:
-- walk up to a cave mouth and turn back → no flip (you never passed through)
-- run tangentially past an entrance → no flip
-- idle around the doorway → no flip, with no band or dwell needed at all
+Run `node tools/zoneLog.js` while playing (it needs DD2 running and
+`config/mapgenie-areas.json` present; the app writes that on launch). Every change of
+zone state appends a line to `zone_log.txt` pairing `(insideFlag, zoneIndex)` with the
+nearest entrance's name and its distance. **Only the CLOSE samples are trustworthy** —
+a line logged deep inside a dungeon (large distance) is pairing a zone number with
+whatever entrance happened to be nearest, which may be a different cave entirely.
 
-It would **delete both tuned constants**, replacing them with one physical fact, and it
-composes with the anchor, which is already captured at closest approach — the same
-moment the transit detector cares about. Cost: the flip lands a fraction of a second
-later, as you emerge rather than as you enter.
+The same log settles **what flag value 2 means**: both 1 and 2 are "inside", but the
+distinction is unknown. If 2 is (say) towns rather than caves, the log will show it.
 
-**2. The inset scale is derived, not measured: 1.92, ±5%.**
-Good enough to play with (the containment backstop never misfired, and the free anchors
-land a few units out), but if the true value is 2.0 the marker drifts ~4 game units per
-100 walked from an entrance, and the zoom offset is off by a few percent with it.
+**2. Two dungeons have no entrance in mapgenie's data at all** — *Vernworth - Southern
+Ruins* and *Sealed Mining Shaft*. The flag detects that you're inside *something*, but
+"nearest entrance" has nothing right to pick, so they need `Insert` plus a manual
+3-point calibration. The id mapping above would fix this properly.
+
+**3. The inset scale is derived, not measured: 1.92, ±5%.**
+Good enough to play with (the free anchors land a few units out), but if the true value
+is 2.0 the marker drifts ~4 game units per 100 walked from an entrance, and the zoom
+offset is off by a few percent with it.
 
 The data can't do better: the noise floor is the ~20-unit door-vs-arrival offset, and
 the estimators disagree systematically (least-squares 1.86 — a projection, so rotation
@@ -558,9 +700,6 @@ noise drags it down; median-of-ratios 1.92–1.97 — magnitudes, which noise in
 **Settling it takes one 3-point calibration inside any dungeon**, spread as wide as the
 place allows. It reports `measured X vs derived 1.92`, overrides the derivation, and
 applies to all 72 dungeons permanently. Until someone does it, the derived value stands.
-
-**3. Two dungeons have no entrance in mapgenie's data at all** — *Vernworth - Southern
-Ruins* and *Sealed Mining Shaft*. They need `Insert` plus a manual calibration.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
