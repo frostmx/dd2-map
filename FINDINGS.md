@@ -887,6 +887,62 @@ noise drags it down; median-of-ratios 1.92–1.97 — magnitudes, which noise in
 place allows. It reports `measured X vs derived 1.92`, overrides the derivation, and
 applies to all 72 dungeons permanently. Until someone does it, the derived value stands.
 
+### Crowdsourcing the database (design note — NOT built)
+
+The idea: hand the app to several players, have them each explore, and pool what they
+learn. Everything that costs playtime is in **one file**, and most of it pools cleanly —
+but not all of it, and the part that doesn't is the part that would silently corrupt the
+pool, so this is written down before anyone tries.
+
+**The file to collect is `areas.json`.** In a packaged build it is NOT next to the .exe:
+
+```
+%APPDATA%\dd2-map\config\areas.json      (packaged — userData; the folder is package.json `name`, "dd2-map", not productName)
+config/areas.json                        (dev)
+```
+
+Nothing else is worth collecting. `overlay.json` is personal taste, `mapgenie-areas.json`
+is a re-derivable cache (gitignored), and `calibration.json` is the one file that should
+travel **outward** — see below.
+
+| key | what it is | pools? |
+|---|---|---|
+| `places` | buildings: mapgenie `poiId` + the game coords of the door you walked through | **perfectly** — both halves are absolute |
+| `floorHeights` | the height a floor sits at, `{ h, n }` | **perfectly** — absolute game height. `n` is a visit count, so a merge can weight-average instead of last-write-wins |
+| `areas` | the per-dungeon transforms | **only via `points`** — see below |
+| `insetLinear` | the shared inset scale/rotation | **never take someone else's** — it's derived from *their* world affine |
+
+**The trap.** A dungeon's `c`/`f` are solved against that player's `insetLinear`, which is
+derived from *their* `calibration.json`. Two players who calibrated the world separately
+have slightly different affines, so their `c`/`f` are expressed in slightly different
+frames, and merging them by copying the numbers slides each imported dungeon by the
+difference. It would look like it worked, and be a few units wrong everywhere.
+
+**The way through** is already in the file: each area carries `points` — the raw
+correspondence `game (x, y) ↔ mapgenie (lng, lat)` that produced it. Both halves are
+**absolute**: the game coords come out of DD2's memory, the lng/lat out of mapgenie's
+portal graph. Neither passed through anybody's calibration. So a merge must re-solve
+`c`/`f` from `points` using the *local* `insetLinear` (`areaStore.solveTranslation` does
+exactly this), never copy `c`/`f` across.
+
+**Or sidestep it entirely:** `configStore` seeds a packaged build's userData from the copy
+of `config/` inside the asar on first run. So ship the .exe with a good `calibration.json`
+and ask contributors not to re-calibrate — then everyone derives the *same* `insetLinear`,
+and even `c`/`f` agree. That is the cheap version, and it makes the pool trivially mergeable.
+
+Sketch of `tools/mergeAreas.js`, if we build it:
+
+- `places` — union by `poiId`. Conflict worth reporting rather than resolving: two players
+  binding the *same* doorway to *different* POIs means one of them mis-pressed `Home`.
+- `floorHeights` — weighted mean by `n` (the counter is already there for this).
+- `areas` — re-solve from `points`; hand-calibrated (`auto: false`) beats auto, and prefer
+  the point with the **smallest `dist`** (that field is the anchor's error — a 2u crossing
+  is a better anchor than a 19u one).
+- `insetLinear` — keep ours; ignore theirs.
+
+Worth knowing before shipping the app around: `Home`, `Insert`, `PageUp`/`PageDown` are
+registered as **global** shortcuts, so they are swallowed system-wide while the app runs.
+
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
    jump (height up/down) + movement (changed) filters. Tools: `tools/scanner.js`

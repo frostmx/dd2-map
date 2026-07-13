@@ -1,6 +1,11 @@
 node_modules/
 dist/
 
+# Claude Code's worktrees land INSIDE the repo (.claude/worktrees/<name>), so without
+# this the first feature worktree shows up as untracked content in the main checkout —
+# and a `git add -A` would happily commit a second checkout inside the first.
+.claude/worktrees/
+
 # Per-machine runtime state the app rewrites as you drag sliders and zoom. The
 # code carries working defaults (src/main/overlayConfig.js), so a fresh clone
 # runs without them. config/calibration.json and config/dd2.offsets.json ARE

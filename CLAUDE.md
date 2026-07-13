@@ -194,3 +194,29 @@ matter can only be judged while actually playing.
 
 `config/mapgenie-areas.json` is a re-derived cache and is gitignored;
 `config/areas.json` is not — it holds solved transforms that cost playtime.
+
+## Working on two features at once (use a worktree)
+
+**One agent per directory.** A branch does not give you separate files — it only moves
+HEAD. Two agents in this folder share the working tree, so they see each other's
+half-finished edits and `git add -A` sweeps up both. That already happened once:
+`57716d4` carries the dungeon/buildings work *and* the camera-facing work in a single
+commit whose message mentions only the first.
+
+Give each feature its own directory instead:
+
+```
+git worktree add ../dd2-map-<feature> -b feat/<feature>   # new branch + its own checkout
+git worktree list                                          # what exists
+git worktree remove ../dd2-map-<feature>                   # when merged
+```
+
+Same repo and history, separate files and separate index — the agents can't collide.
+(In Claude Code: `EnterWorktree`, or spawn a subagent with `isolation: "worktree"`.)
+
+Two things specific to this repo:
+- Each worktree needs its own `npm install` — `node_modules/` is not shared, and without
+  koffi there is no `ReadProcessMemory` and no position.
+- `config/overlay.json` and `config/areas.json` are runtime state the app rewrites as you
+  play. Two worktrees keep separate copies; don't be surprised when a knob you set in one
+  isn't set in the other, and don't commit a config churn diff you didn't intend.
