@@ -6,7 +6,7 @@ const overlayConfig = require('./overlayConfig');
 const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
-const { createTracker } = require('./areaTracker');
+const { createTracker, floorOf } = require('./areaTracker');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -16,13 +16,30 @@ overlayWindow.applyThrottlingSwitches();
 // Dev-only hot reload: reloads the window when a renderer file changes and
 // relaunches the app when a main-process file changes. Never active in a
 // packaged build; wrapped so a missing dependency can't break startup.
+//
+// IT WATCHES THE WHOLE REPO, so anything that WRITES into the repo while the app runs
+// makes it reload — and a reload wipes the injected marker and re-fetches the mapgenie
+// page, which you see as the map blanking and redrawing mid-game.
+//
+// That is not hypothetical. Two separate cases have caused it:
+//   - config/ — the runtime state we write ourselves (calibration, zoom, areas). Saving
+//     the zoom would reload the app on every zoom change.
+//   - zone_log.txt — tools/zoneLog.js appends a line on every room change, so simply
+//     WALKING THROUGH A DUNGEON with the logger running reloaded the app over and over
+//     (measured: 21 reloads in one session; the more you explored, the worse it got).
+//
+// So the rule is: the watcher may only ever see SOURCE. Anything written at runtime —
+// by the app or by the RE tooling — has to be ignored, or it will do this again with
+// whatever the next tool happens to write.
 if (!app.isPackaged) {
   try {
-    // Ignore everything under config/ — it holds runtime state we write
-    // ourselves (calibration, saved zoom). Without this, saving the zoom on
-    // every change would reload the app each time you zoom. Regex matches the
-    // config path segment on both slash styles, absolute or relative.
-    require('electron-reloader')(module, { ignore: [/[\/\\]config[\/\\]/] });
+    require('electron-reloader')(module, {
+      ignore: [
+        /[\/\\]config[\/\\]/,          // runtime state: calibration, view, areas, the graph cache
+        /[\/\\]tools[\/\\]/,           // the RE tooling isn't part of the running app
+        /\.(txt|csv|bin|log)$/i,       // what that tooling writes — zone_log.txt et al
+      ],
+    });
   } catch { /* electron-reloader not installed — run without hot reload */ }
 }
 
@@ -224,9 +241,90 @@ function absorbRoom() {
   areas.rooms[learned.room] = learned.areaKey;
   areaStore.save(areas);
   pushAreas();
-  const area = areas.areas[learned.areaKey];
-  const where = area ? `${area.name} ${area.floor}`.trim() : learned.areaKey;
-  console.log(`[areas] learned: room ${learned.room} is on ${where} — it won't need telling again`);
+  if (learned.conflict) {
+    // The room has now been seen on two floors — it's a stairwell, and it physically
+    // spans both. There is no right answer, so it's marked ambiguous and will never be
+    // consulted again. Saying so matters: silently dropping it would look like the
+    // learning had simply failed.
+    console.log(
+      `[areas] room ${learned.room} is on BOTH ${learned.conflict.split('|')[1] || '?'} ` +
+      `and ${learned.areaKey === '?' ? learned.label : learned.areaKey} — that's a stairwell. ` +
+      'Marked ambiguous; it will never decide the floor again.',
+    );
+    return;
+  }
+  console.log(`[areas] learned: room ${learned.room} is on ${learned.label} — it won't need telling again`);
+}
+
+// A floor reached only by STAIRS has no entrance, so no free anchor from a doorway
+// crossing ever lands on it. Left alone it stays uncalibrated forever: the marker simply
+// vanishes when you go up there, and Refine can't rescue it either (Refine SHIFTS an
+// existing transform — there'd be nothing to shift). Every upper floor would be dead.
+//
+// But pressing PageUp/PageDown is an assertion: you just took a stair, so you're standing
+// at the end of it. mapgenie knows where that stair comes out on the destination panel
+// (203 internal portal edges). So the crossing is a free correspondence, exactly like
+// walking in the front door — the same trick, one level down.
+//
+// Which stair? The one whose near side you're standing on. The floor you just LEFT is
+// calibrated (that's how you got here), so inverting ITS transform puts all of its stairs
+// in game coords, and the nearest is the one you took. The chain bootstraps itself:
+// entrance places floor 1, floor 1's stairs place floor 2, and so on.
+function absorbFloorAnchor() {
+  const req = tracker.takeFloorAnchor();
+  if (!req || !areaMeta || !areas.insetLinear) return;
+  const existing = areas.areas[req.areaKey];
+  if (existing && typeof existing.c === 'number') return;  // already placed; nothing to do
+
+  // The stairs on the floor we just left that lead to the one we're now on.
+  const stairs = areaMeta.portals.filter((p) => (
+    p.fromRegion === req.subregionId
+    && p.toRegion === req.subregionId
+    && floorOf(p.fromTitle) === req.fromFloor
+    && floorOf(p.toTitle) === req.toFloor
+  ));
+  if (!stairs.length) {
+    console.log(
+      `[areas] ${req.name} ${req.toFloor} has no transform yet, and mapgenie lists no ` +
+      `stair from ${req.fromFloor || 'this floor'} to it — the marker can't be placed there. ` +
+      'Calibrate it by hand (3-point) while standing on it.',
+    );
+    return;
+  }
+
+  // Pick the stair we actually took: invert the floor we came FROM (it's calibrated —
+  // that's how we got here) to place its stairs in game coords, and take the nearest.
+  const fromAffine = areaStore.affineFor(areas, `${req.subregionId}|${req.fromFloor}`);
+  let best = stairs[0];
+  let bestDist = null;
+  if (fromAffine && stairs.length > 1) {
+    for (const s of stairs) {
+      const g = areaStore.invert(fromAffine, s.fromLng, s.fromLat);
+      if (!g) continue;
+      const d = Math.hypot(req.gameX - g.x, req.gameY - g.y);
+      if (bestDist === null || d < bestDist) { bestDist = d; best = s; }
+    }
+  }
+
+  // You are standing where that stair comes out. Pair it with your world position.
+  const { c, f } = areaStore.solveTranslation(areas.insetLinear, {
+    gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat,
+  });
+  areas.areas[req.areaKey] = {
+    subregionId: req.subregionId,
+    floor: req.toFloor,
+    name: req.name,
+    c,
+    f,
+    auto: true,
+    points: [{ gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat }],
+  };
+  areaStore.save(areas);
+  pushAreas();
+  const via = bestDist === null
+    ? ''
+    : ` (matched the stair you took, ${bestDist.toFixed(0)}u away of ${stairs.length})`;
+  console.log(`[areas] placed "${req.name}" ${req.toFloor} from the stair crossing${via}`);
 }
 
 // "You may have changed floor." Advice, never an action — the tracker deliberately did
@@ -376,6 +474,20 @@ function createWindow() {
     // Electron doesn't warn about a leak that isn't one of ours.
     webContents.setMaxListeners(30);
     mainGuest = webContents;
+
+    // The mapgenie guest reloads itself, repeatedly (26 times in one play session),
+    // and each reload wipes the injected marker + found-sync and re-runs the portal
+    // extraction — visible as the map blanking and redrawing while you play. Nothing in
+    // our code reloads it, so this says WHO does: a real navigation, a crash, or the
+    // page choosing to reload. Diagnostic; keep until the cause is nailed down.
+    webContents.on('did-navigate', (_e2, url) => console.log(`[webview nav] -> ${url}`));
+    webContents.on('did-fail-load', (_e2, code, desc, url) => {
+      console.log(`[webview FAILED LOAD] ${code} ${desc} — ${url}`);
+    });
+    webContents.on('render-process-gone', (_e2, details) => {
+      console.log(`[webview CRASHED] ${details.reason} (exit ${details.exitCode})`);
+    });
+    webContents.on('unresponsive', () => console.log('[webview UNRESPONSIVE]'));
     webContents.on('console-message', (_e2, level, message, line, sourceId) => {
       if (message.startsWith(FOUND_PREFIX)) {
         mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
@@ -547,7 +659,13 @@ function registerHotkeys() {
   // automatic is dropping through a hole to the floor below without crossing a
   // portal, since the zone flag doesn't change between floors. Not a fallback for
   // that case — a first-class control.
+  // A manual change can produce two things the poll loop would otherwise pick up a tick
+  // later: the room it just taught us, and — for a floor with no entrance of its own —
+  // the stair crossing that places it. Drain both here so the map is right by the time
+  // you've let go of the key.
   const announce = (area) => {
+    absorbRoom();
+    absorbFloorAnchor();
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
   bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));

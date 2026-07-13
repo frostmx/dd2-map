@@ -117,6 +117,10 @@ function createTracker() {
   // owns areas.json and is the only thing allowed to write it.
   let pendingRoom = null;
 
+  // Set when a manual floor change may also have supplied a free anchor for a floor
+  // that has none (see stepFloor). Resolved by main, which holds the transforms.
+  let pendingFloorAnchor = null;
+
   // A SUGGESTION that the floor may have changed — never an action. Raised when you
   // enter an unknown room having gained or lost a lot of height since the last room
   // change. That is what a staircase looks like, but it is also what a long ramp or a
@@ -133,6 +137,25 @@ function createTracker() {
   let roomEntryHeight = null;     // height when the current room was entered
   let floorHint = null;           // { dh } — drained by main for the log
 
+  // Ticks (at 30Hz) you must remain in one room before it's recorded against the current
+  // floor. This is the fix for the stairwell: pressing PageUp happens IN the stairs, so
+  // learning immediately records the one room that belongs to both floors. Waiting until
+  // you've settled records the room you actually walked into instead. ~1.5s.
+  const LEARN_DWELL_TICKS = 45;
+  let roomTicks = 0;              // consecutive ticks in the current room
+
+  // Do we actually BELIEVE the floor we're showing? Learning while we don't is how the
+  // table gets poisoned wholesale: walk down to B1F, explore for half a minute before
+  // pressing PageDown, and every B1F room you crossed gets written down as 1F. Next visit
+  // they'd all drag you back to the wrong floor.
+  //
+  // The floor is trusted when something ASSERTED it — you pressed the key, you came in
+  // through an entrance that names the floor, or you walked into a room we already know.
+  // It stops being trusted the moment we see a move that could have been an unannounced
+  // floor change (the height jump), and stays untrusted until something asserts it again.
+  // Nothing is recorded in the meantime.
+  let trusted = false;
+
   // Why the area last changed. Surfaced so the log can say WHY, not just what.
   let lastReason = null;
 
@@ -140,14 +163,38 @@ function createTracker() {
   const validRoom = (r) => Number.isInteger(r) && r !== -1;
   const roomKey = (r) => (r >>> 0).toString(16).padStart(8, '0');
 
-  // Remember: this room is on this floor. Called when you set the floor by hand — the
-  // only moment we actually know the answer.
-  function learnRoom(room, areaKey) {
+  // A room that has been seen on TWO different floors. A stairwell is exactly this — it
+  // physically spans both — and it can never be given one answer, so it is written down
+  // as ambiguous and then never used or overwritten again.
+  const AMBIGUOUS = '?';
+
+  // Remember: this room is on this floor.
+  //
+  // The obvious moment to record it — the instant you press PageUp/PageDown — turns out
+  // to be the WORST one. That's when you're standing in the stairwell, which belongs to
+  // both floors at once. Learning it there taught the table a contradiction, and then the
+  // table fought you: walk into the stairwell, it flips you to the wrong floor, you
+  // correct it, it relearns, and the next time through it flips you the other way.
+  // (Observed live: room 1bc90b46 in The Gracious Hand's Vaults ping-ponged B1F/1F/B1F/1F.)
+  //
+  // Two rules kill that:
+  //   1. Learn on DWELL, not on the keypress — record whichever room you've settled in,
+  //      which is a real room on a real floor, not the stairs you were passing through.
+  //   2. A room that ever contradicts itself is marked AMBIGUOUS, permanently. That is
+  //      the stairwell, and the right thing to do with it is nothing at all.
+  function learnRoom(room, areaKey, label) {
     if (!validRoom(room) || !areaKey) return;
     const k = roomKey(room);
-    if (rooms[k] === areaKey) return;   // already known, don't churn the file
+    const prev = rooms[k];
+    if (prev === areaKey || prev === AMBIGUOUS) return;   // known, or known-unknowable
+
+    if (prev && prev !== areaKey) {
+      rooms[k] = AMBIGUOUS;
+      pendingRoom = { room: k, areaKey: AMBIGUOUS, label, conflict: prev };
+      return;
+    }
     rooms[k] = areaKey;
-    pendingRoom = { room: k, areaKey };
+    pendingRoom = { room: k, areaKey, label };
   }
 
   function invertWorld(lng, lat) {
@@ -186,7 +233,19 @@ function createTracker() {
       if (!floors.includes(f)) floors.push(f);
       floorsBySub.set(p.toRegion, floors);
     }
-    for (const floors of floorsBySub.values()) floors.sort((x, y) => floorRank(x) - floorRank(y));
+    for (const [sub, floors] of floorsBySub) {
+      // Some of mapgenie's POI titles just don't carry a floor label (The Gracious
+      // Hand's Vaults has three such portals alongside its B1F/1F/2F ones), and '' ranks
+      // between B1F and 1F — so it lands in the middle of the list as a PHANTOM FLOOR
+      // with no inset panel behind it. PageDown from 1F stepped onto it, the marker had
+      // nowhere to go, and you had to press the key twice to get to B1F.
+      //
+      // '' is only a real floor when it is the ONLY one (a single-level dungeon, where
+      // it's the natural key). Alongside labelled floors it is noise.
+      const named = floors.filter((f) => f !== '');
+      const ordered = (named.length ? named : floors).sort((x, y) => floorRank(x) - floorRank(y));
+      floorsBySub.set(sub, ordered);
+    }
 
     if (!worldCal) return;
     for (const p of meta.portals) {
@@ -277,47 +336,85 @@ function createTracker() {
       if (inside !== syncedInside) {
         syncedInside = inside;
         if (inside) {
+          // The entrance NAMES the floor it leads to, so the floor is trusted on the way
+          // in — which is what makes the arrival room safe to record.
           enterNearest(pos, `the game says you're inside (flag ${pos.insideFlag})`);
-          // The entrance told us the floor, and we know the room we arrived in — so
-          // that room is now known, for free, without you doing anything.
-          if (current) learnRoom(pos.roomHash, current.key);
+          trusted = !!current;
         } else {
           current = null;
+          trusted = false;
           lastReason = 'the game says you\'re in the overworld (flag 0)';
         }
         lastRoom = pos.roomHash;
         roomEntryHeight = pos.height;
+        roomTicks = 0;
         return current;
       }
 
-      // Same side of the door as last tick. The only thing left that can change the
-      // area is walking into a room we've been taught the floor of.
-      if (!current || pos.roomHash === lastRoom) return current;
+      if (!current) return current;
 
-      // How much height did we gain or lose crossing out of the last room? A staircase
-      // between floors shows up here as a big number.
+      // Still in the same room. Once you've SETTLED here — and only if we actually
+      // believe the floor — record it. Settling, rather than the instant you pressed the
+      // key, is what keeps the stairwell out of the table: you press PageUp while in the
+      // stairs (which belong to both floors), then walk into a room that belongs to one.
+      if (pos.roomHash === lastRoom) {
+        roomTicks += 1;
+        if (roomTicks === LEARN_DWELL_TICKS && trusted) {
+          learnRoom(pos.roomHash, current.key, `${current.name} ${current.floor}`.trim());
+        }
+        return current;
+      }
+
+      // A new room. How much height did we gain or lose getting here? A staircase between
+      // floors shows up as a big number.
       const dh = roomEntryHeight === null ? 0 : pos.height - roomEntryHeight;
       lastRoom = pos.roomHash;
       roomEntryHeight = pos.height;
+      roomTicks = 0;
       if (!validRoom(pos.roomHash)) return current;
 
       const known = rooms[roomKey(pos.roomHash)];
+      // AMBIGUOUS — a room seen on two floors, i.e. a stairwell. It cannot answer the
+      // question, and pretending otherwise is what made the map ping-pong. Ignore it and
+      // hold the floor we're on; the room you walk into NEXT will settle it.
+      if (known === AMBIGUOUS) return current;
+
       if (known && known !== current.key) {
         const floor = known.split('|')[1] || '';
+        const from = current.floor;
         current = { ...current, floor, key: known };
+        trusted = true;   // a room we know is an assertion — as good as you pressing the key
         lastReason = `room ${roomKey(pos.roomHash)} is on ${floor || 'this floor'} (learned)`;
+        // The floor may never have been placed (an upper floor has no entrance of its
+        // own). You just came off the stair, so offer the crossing as its anchor —
+        // exactly as a manual floor change does. Main ignores it if the floor is already
+        // placed.
+        pendingFloorAnchor = {
+          subregionId: current.subregionId,
+          name: current.name,
+          fromFloor: from,
+          toFloor: floor,
+          areaKey: current.key,
+          gameX: pos.x,
+          gameY: pos.y,
+        };
         return current;
       }
-      if (known) return current;   // known, and it's the floor we're already on
+      if (known) { trusted = true; return current; }   // known, and already the right floor
 
       // An unknown room. It tells us nothing on its own — a room change is NOT a floor
       // change (one walk through Forgotten Tunnel crossed 8 rooms across 2 floors), so
       // inferring from it would be wrong far more often than right. Hold the floor we're
-      // on. But if we also moved a long way vertically, SAY so: that's what a staircase
-      // looks like, and more importantly it's the only trace left by falling through a
-      // hole, which no portal and no table can catch.
+      // on.
+      //
+      // But a big height change getting here means we MIGHT just have changed floor
+      // without being told — a staircase, or a hole you fell through. Two things follow:
+      // say so (the hint), and stop trusting the floor, so nothing further is written
+      // down until you confirm it or a known room settles it. Recording rooms while
+      // possibly on the wrong floor is precisely how the table gets poisoned.
       if (Math.abs(dh) >= FLOOR_HINT_HEIGHT) {
         floorHint = { dh, room: roomKey(pos.roomHash) };
+        trusted = false;
       }
       return current;
     },
@@ -339,21 +436,19 @@ function createTracker() {
         lastReason = 'Insert';
       } else {
         enterNearest(lastPos, 'Insert');
-        if (current) learnRoom(lastPos.roomHash, current.key);
       }
       syncedInside = lastPos.insideFlag !== 0;
       lastRoom = lastPos.roomHash;
+      roomTicks = 0;
+      trusted = !!current;   // you told us; that's an assertion
       return current;
     },
 
-    // PageUp / PageDown: step a floor. No anchor comes with this — you asked for it, so
-    // we trust it — which means an unvisited floor lands uncalibrated and says so rather
-    // than guessing where you are.
-    //
-    // But it is not JUST an override. It is how the roomHash table gets taught: you are
-    // standing in a room, and you have just told us which floor that room is on. That
-    // is the one moment we actually know. Recorded, so this room — and therefore this
-    // spot in this dungeon — is never wrong again, in this session or any future one.
+    // PageUp / PageDown: step a floor. It is not just an override — it is the only input
+    // that ever teaches the floor table. But NOT by recording the room you're standing in
+    // right now: that's the stairwell, which belongs to both floors, and writing it down
+    // is what made the map ping-pong. The room is recorded once you've SETTLED somewhere
+    // (see tick / LEARN_DWELL_TICKS), which is a room on exactly one floor.
     stepFloor(delta) {
       if (!current) return current;
       const floors = floorsBySub.get(current.subregionId) || [];
@@ -361,8 +456,33 @@ function createTracker() {
       if (i < 0) return current;
       const next = floors[i + delta];
       if (next === undefined) return current;  // already at the top/bottom floor
+      const from = current.floor;
       current = { ...current, floor: next, key: keyOf(current.subregionId, next) };
-      if (lastPos) learnRoom(lastPos.roomHash, current.key);
+      lastReason = `${delta > 0 ? 'PageUp' : 'PageDown'} — you said ${next}`;
+      roomTicks = 0;   // restart the dwell: don't learn the stairs you're standing in
+      trusted = true;  // you told us; that's the strongest assertion there is
+
+      // A floor reached only by STAIRS has no entrance, so no free anchor ever lands on
+      // it — it would stay uncalibrated forever, the marker would simply vanish there,
+      // and Refine couldn't rescue it (Refine shifts an existing transform; there'd be
+      // nothing to shift). Dead floors.
+      //
+      // But you have just ASSERTED the floor change by pressing the key, which means you
+      // are standing at the top or bottom of the stair you took — and mapgenie knows
+      // where that stair comes out on the destination panel (203 internal portal edges).
+      // So the crossing you just made is a free correspondence, exactly like walking in
+      // through the front door. Main resolves it (it owns areas.json and the transforms).
+      if (lastPos) {
+        pendingFloorAnchor = {
+          subregionId: current.subregionId,
+          name: current.name,
+          fromFloor: from,
+          toFloor: next,
+          areaKey: current.key,
+          gameX: lastPos.x,
+          gameY: lastPos.y,
+        };
+      }
       return current;
     },
 
@@ -390,6 +510,15 @@ function createTracker() {
       const h = floorHint;
       floorHint = null;
       return h;
+    },
+
+    // Drains the stair crossing from the last manual floor change, so main can use it to
+    // place a floor that has no entrance of its own.
+    takeFloorAnchor() {
+      if (!pendingFloorAnchor) return null;
+      const a = pendingFloorAnchor;
+      pendingFloorAnchor = null;
+      return a;
     },
 
     current: () => current,
