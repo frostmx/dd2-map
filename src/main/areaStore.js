@@ -20,13 +20,21 @@ const store = require('./configStore');
 
 const FILE = 'areas';
 
-// `rooms` — the learned roomHash -> areaKey table. See areaTracker: the game hands us a
-// stable id for the room you're standing in, but nothing that says which FLOOR that
-// room is on. Every time you set the floor by hand, the room you were in is recorded
-// here — so the same room never has to be corrected twice, and a revisit sets the floor
-// exactly, with no geometry involved at all.
+// `floorHeights` — areaKey -> the height that floor SITS at, in game units, learned from
+// the player asserting the floor with PageUp/PageDown.
+//
+// This is the only thing that can separate floors, and it's worth being explicit about
+// why: the game reports the SAME (x, y) on every floor of a dungeon. Two floors differ
+// in z and in nothing else. So no x/y signal — not the room id, not the portal graph,
+// not the panel geometry — can ever tell them apart, however clever. Height can.
+//
+// Absolute height, not height CHANGE: measured floor gaps run from 5.8u (The Gracious
+// Hand's Vaults) to 16.6u (Forgotten Tunnel), while the height wanders up to 4u WITHIN a
+// single floor. No constant threshold survives both. But once you've stood on a floor and
+// said so, that floor's height is known for that dungeon, and after that your height just
+// picks the nearest one.
 function empty() {
-  return { insetLinear: null, areas: {}, rooms: {} };
+  return { insetLinear: null, areas: {}, floorHeights: {} };
 }
 
 function load() {
@@ -35,7 +43,7 @@ function load() {
   return {
     insetLinear: saved.insetLinear || null,
     areas: saved.areas || {},
-    rooms: saved.rooms || {},
+    floorHeights: saved.floorHeights || {},
   };
 }
 

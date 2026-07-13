@@ -154,14 +154,27 @@ isn't in question), so you can just drag yourself into place.
 Two dungeons have no entrance in mapgenie's data at all — **Vernworth - Southern
 Ruins** and **Sealed Mining Shaft** — so they need `Insert` and a manual calibration.
 
+### Floors
+
+A multi-floor dungeon needs **one keypress per floor, once**. Stand on a floor and press
+`PageUp` / `PageDown` until the panel names the right one; the app then measures how high
+that floor sits and remembers it for that dungeon. After that your height picks the floor
+on its own, every visit, forever.
+
+Why it has to be taught at all: **the game reports the same (x, y) on every floor.** Two
+floors differ in height and in nothing else, so there is no way to tell them apart without
+knowing what height each one is at — and that's dungeon-specific (floors sit anywhere from
+6 to 17 game units apart).
+
+Press the key whenever the floor is wrong, including mid-staircase — the height is only
+recorded once you've settled somewhere flat, so the stairs can't confuse it.
+
 ### When it guesses wrong
 
-In/out comes from the game, so that shouldn't need correcting. Two things are still
-invisible to it, and the override is a real control for them, not a fallback:
+In/out comes from the game, so that shouldn't need correcting. What it can't see:
 
-- `PageUp` / `PageDown` — force a **floor change**. The flag doesn't change between
-  floors, so dropping through a hole to the level below is invisible to everything
-  automatic.
+- **A floor change**, until you've taught it that floor (above). Dropping through a hole
+  to the level below is the case to watch for.
 - `Insert` — force in / out. Mainly for the two dungeons with no entrance in mapgenie's
   data, where "nearest entrance" has nothing right to pick.
 

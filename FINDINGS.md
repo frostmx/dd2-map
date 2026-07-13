@@ -18,8 +18,8 @@ dd2-map/
     overlayWindow.js  # the transparent, click-through, always-on-top overlay window
     overlayConfig.js  # overlay settings + defaults
     configStore.js    # config/<name>.json load/save (userData when packaged)
-    areaTracker.js    # which area you're in: the game's own inside-flag, plus the
-                      #   nearest known entrance to say WHICH dungeon
+    areaTracker.js    # which area you're in: the game's inside-flag (in/out), the nearest
+                      #   entrance (which dungeon), and HEIGHT (which floor)
     areaStore.js      # config/areas.json: the shared inset linear part + per-dungeon
                       #   translations. Main is its ONLY writer (see below).
   src/renderer/
@@ -586,49 +586,70 @@ which may be a different cave entirely. Visit enough dungeons and the mapping fa
 The free-anchor calibration trick (below) is unaffected: entry still hands over the
 player's world position paired with the matched entrance's inset position.
 
-### 3. Which floor? A LEARNED table, keyed on the game's room id
+### 3. Which floor? HEIGHT — and nothing else can do it
 
-Nothing in memory says which floor you're on — the inside flag and the zone index both
-hold steady across a dungeon's floors. But there is a third int in the struct:
+**Only height can carry this, as a matter of fact rather than preference: the game reports
+the SAME (x, y) on every floor of a dungeon.** Two floors differ in z and in nothing else.
+So no x/y signal — not a room id, not the portal graph, not the panel geometry — can ever
+separate them, however clever. This is worth being blunt about because two plausible ideas
+were built and both failed on exactly this.
+
+**The room hash is not a floor id (dead end, cost a day).** The third int in the struct:
 
 ```
-DD2.exe+FA62C94   roomHash   -1 in the overworld; inside, an id for the room you're in
+DD2.exe+FA62C94   roomHash   -1 in the overworld; inside, an id for a streaming cell
 ```
 
-**It is not a floor**, and this is the trap to avoid: it changes far more often. One walk
-through Forgotten Tunnel crossed **8 rooms across 2 floors**. Treating a room change as a
-floor change would be wrong most of the time, and a wrong automatic floor change silently
-teleports the marker to the wrong panel — worse than not moving it at all.
+It looked perfect: deterministic (walking Forgotten Tunnel one way and back gave the
+identical five hashes in reverse order), so it was used as a *learned key* — press
+`PageUp`, record the room you're in against that floor. It does not work, and cannot:
 
-**But it is deterministic.** Walking that cave one way and back gave the identical five
-hashes in reverse order (`9e1f3458 11e21904 93438736 5ec54b5f 8e0b2c2c` →
-`8e0b2c2c 5ec54b5f 93438736 11e21904 9e1f3458`). The same physical room gives the same
-hash, across visits and across sessions.
+- **The same hash appears on two floors.** In The Gracious Hand's Vaults, `1bc90b46` and
+  `ae32b49d` both occur at h=-13.7 *and* h=-5.2. It's a cell that spans floors vertically.
+- Two of them **flicker back and forth three times a second** while you stand still on a
+  boundary.
+- Recording it taught the table contradictions, which then *fought the player*: walk into
+  the stairwell, get flipped to the wrong floor, correct it, get flipped the other way
+  next time. Every room ends up marked ambiguous and the mechanism is dead weight.
 
-So it's a **key, not a signal**. The floor is set by hand (`PageUp`/`PageDown`), and doing
-so records the room you were standing in against that floor, in `areas.rooms`. Walk into
-that room again — next session, next month — and the floor is set exactly from the table,
-with no geometry and no guessing. **A room needs correcting at most once, ever**, and only
-one room per floor actually needs it (the floor carries forward until a *known* room says
-otherwise). Verified in simulation against the real Forgotten Tunnel log: first visit, one
-`PageUp`; second visit, zero input.
+Read it, log it (`tools/zoneLog.js`), but never key a floor on it.
 
-An unknown room infers nothing — the current floor is held. Never guessed.
+**What works: learn where each floor SITS, per dungeon.** Stand on a floor, press
+`PageUp`/`PageDown` to name it; once your height settles, that height is recorded in
+`areas.floorHeights`. From then on your height picks the nearest floor by itself.
 
-**The height hint.** On entering an *unknown* room having gained/lost ≥12u since the last
-room change, the app says so and suggests the hotkey. Advice, not an action: that's what a
-staircase looks like, but so is a long ramp or a deep shaft within one floor. It exists
-for the one case nothing else can catch — **falling through a hole to the floor below**,
-where there's no portal, no prompt, and you might not even notice the map went wrong.
+- **Absolute height, never height CHANGE.** Measured floor gaps run **5.8u** (The Gracious
+  Hand's Vaults) to **16.6u** (Forgotten Tunnel), while the height wanders up to **4u
+  within a single floor**. A change threshold would need to sit below 5.8 and above 4 — a
+  1.8u window — and be wrong in the next dungeon regardless. A 12u threshold picked from
+  Forgotten Tunnel is precisely what silently broke the previous attempt: it never fired in
+  the Vaults, so the app never noticed the player had changed floor and confidently wrote
+  every floor's rooms down as 1F.
+- **The height is taken once it SETTLES** (~1s flat, ≤1.5u spread), not when you press the
+  key — you press it *on the stairs*, and the stairs are between floors, which is the one
+  height that belongs to neither. Verified in simulation replaying the real log: pressing
+  PageDown mid-staircase still records B1F correctly.
+- Averaged over visits, so a second pass sharpens a floor rather than replacing it.
+- A rival floor must beat the current one by `SWITCH_MARGIN` (1.5u), so walking a ramp
+  can't flicker the map between two panels. An untaught floor is never guessed at.
+
+Simulated against the real Vaults data: teach three floors (one keypress each), then walk
+the same route again and all three follow with **zero input**.
 
 **Floors must be ordered by ELEVATION, not alphabetically.** `B` = basement, so B1F sits
 *under* 1F, and a string sort gives `['1F', 'B1F']` — which made `PageUp` from B1F walk off
-the end of the list and silently do nothing. Caught by simulating the tracker against the
-real log; `floorRank()` exists for this (`B1F → -1`, `1F → +1`).
+the end of the list and silently do nothing. `floorRank()` exists for this (`B1F → -1`,
+`1F → +1`). Also: mapgenie has portals whose titles carry **no floor label at all** (three
+into the Vaults), and `''` ranks between B1F and 1F — a phantom floor with no panel behind
+it, which `PageDown` would step onto. `''` is only a real floor when it is the only one.
 
-**Manual override** (`Insert` in/out, `PageUp`/`PageDown` floor) remains, and now earns
-its keep on exactly two things the automatic path can't do: **the floor** (as above), and
-the **two orphan dungeons**, where "nearest entrance" has nothing right to pick.
+**Floors reached only by stairs have no entrance**, so no free anchor from a doorway
+crossing ever lands on them — they'd stay uncalibrated forever, the marker would simply
+vanish up there, and Refine couldn't rescue it (it *shifts* an existing transform; there'd
+be nothing to shift). A floor change now offers the **stair crossing** as that floor's
+anchor, using mapgenie's 203 internal portal edges: the floor you came *from* is
+calibrated, so inverting it places its stairs in game coords and the nearest is the one you
+took. Confirmed live.
 
 ### Calibration is free, because a crossing IS a correspondence
 

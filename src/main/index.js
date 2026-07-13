@@ -76,8 +76,9 @@ const CELL = 128;
 // the local mirror above. Found by CE value-scanning (2026-07-13; see
 // config/dd2.offsets.json). Three fields we care about, so one read covers them all:
 //
-//   -24  roomHash    -1 outside; inside, a STABLE id for the room you're standing in
-//                    (same room = same hash, across visits and across sessions)
+//   -24  roomHash    -1 outside; inside, an id for the streaming cell you're in. NOT a
+//                     floor and NOT usable as one — the same hash turns up at h=-13.7
+//                     and h=-5.2 in one dungeon. Read only so zoneLog can record it.
 //     0  insideFlag   0 = overworld; 1 and 2 both = inside (2 is some other kind of
 //                     interior — seen in Stormwind Cave; both mean inside, so it
 //                     doesn't matter which)
@@ -86,7 +87,8 @@ const CELL = 128;
 //                     dungeon yet — see tools/zoneLog.js.
 //
 // insideFlag replaces guessing entry/exit from proximity to a doorway position derived
-// from the world affine. roomHash is the key to the learned floor table (areas.rooms).
+// from the world affine. The FLOOR comes from height (see areaTracker), which is the only
+// signal that can carry it: the game reports the same (x, y) on every floor of a dungeon.
 const ZONE_WINDOW_OFFSET = 0x0fa62c94n;  // roomHash; insideFlag at +24, zoneIndex at +28
 const ZONE_WINDOW_SIZE = 32;
 
@@ -153,7 +155,7 @@ let areaMeta = null;                 // mapgenie's region/portal graph
 let lastAreaKey = null;              // for edge detection on the broadcast
 
 function pushAreas() {
-  tracker.setRooms(areas.rooms);   // the learned roomHash -> floor table
+  tracker.setHeights(areas.floorHeights);   // where each floor sits, in game units
   broadcast('areas:state', areas);
 }
 
@@ -227,33 +229,24 @@ function absorbAnchor() {
   );
 }
 
-// The game gives us a stable id for the room you're standing in, but nothing that says
-// which FLOOR that room is on — and a room change is NOT a floor change (one walk
-// through Forgotten Tunnel crossed 8 rooms across 2 floors), so it can't be inferred.
+// Where a floor SITS, in game units — the one thing that can tell floors apart, because
+// the game reports the same (x, y) on every floor of a dungeon and they differ in z alone.
 //
-// So it's learned instead. Every time you set the floor by hand, the room you were in
-// is recorded against it. Walk into that room again — next week, next session — and the
-// floor is set exactly, from the table, with no geometry involved. Each room needs
-// correcting at most once, ever, and the dungeon becomes deterministic as you explore it.
-function absorbRoom() {
-  const learned = tracker.takeRoom();
-  if (!learned) return;
-  areas.rooms[learned.room] = learned.areaKey;
+// Learned from you: stand on a floor, press PageUp/PageDown to name it, and once your
+// height settles it's recorded for this dungeon. From then on your height picks the floor
+// by itself. Averaged over visits, so a second pass sharpens it rather than replacing it.
+function absorbHeight() {
+  const m = tracker.takeHeight();
+  if (!m) return;
+  areas.floorHeights[m.areaKey] = { h: m.h, n: m.n };
   areaStore.save(areas);
   pushAreas();
-  if (learned.conflict) {
-    // The room has now been seen on two floors — it's a stairwell, and it physically
-    // spans both. There is no right answer, so it's marked ambiguous and will never be
-    // consulted again. Saying so matters: silently dropping it would look like the
-    // learning had simply failed.
-    console.log(
-      `[areas] room ${learned.room} is on BOTH ${learned.conflict.split('|')[1] || '?'} ` +
-      `and ${learned.areaKey === '?' ? learned.label : learned.areaKey} — that's a stairwell. ` +
-      'Marked ambiguous; it will never decide the floor again.',
-    );
-    return;
-  }
-  console.log(`[areas] learned: room ${learned.room} is on ${learned.label} — it won't need telling again`);
+  const area = areas.areas[m.areaKey];
+  const label = area ? `${area.name} ${area.floor}`.trim() : m.areaKey;
+  console.log(
+    `[areas] ${label} sits at height ${m.h.toFixed(1)} `
+    + `(measured ${m.sample.toFixed(1)}${m.n > 1 ? `, averaged over ${m.n} visits` : ''})`,
+  );
 }
 
 // A floor reached only by STAIRS has no entrance, so no free anchor from a doorway
@@ -327,28 +320,6 @@ function absorbFloorAnchor() {
   console.log(`[areas] placed "${req.name}" ${req.toFloor} from the stair crossing${via}`);
 }
 
-// "You may have changed floor." Advice, never an action — the tracker deliberately did
-// NOT move you. A big height change across a room boundary is what a staircase looks
-// like, but it's also what a long ramp or a deep shaft inside one floor looks like, so
-// acting on it would silently teleport the marker to the wrong panel often enough to be
-// worse than useless.
-//
-// It's here for the case nothing else can catch: DROPPING THROUGH A HOLE to the floor
-// below. No portal, no prompt, and you might not even notice — the map would just be
-// quietly wrong. This tells you, you press PageUp/PageDown, and that both fixes it and
-// teaches the room, so it never asks again.
-function absorbFloorHint() {
-  const hint = tracker.takeFloorHint();
-  if (!hint) return;
-  const dir = hint.dh < 0 ? 'DOWN' : 'UP';
-  const key = hint.dh < 0 ? cfg.hotkeys.floorDown : cfg.hotkeys.floorUp;
-  console.log(
-    `[areas] you moved ${Math.abs(hint.dh).toFixed(0)}u ${dir} into a new room (${hint.room}) — ` +
-    `if that was a floor change (a staircase, or a hole you fell through), press ${key}. ` +
-    'It will remember this room and stop asking.',
-  );
-}
-
 // Both the main window and the overlay run the same follow loop off this feed.
 function broadcast(channel, payload) {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -411,8 +382,8 @@ function startMemoryPolling() {
       // windows need the same answer and neither may disagree with the other.
       const area = tracker.tick({ x: g.x, y: g.y, height, insideFlag, zoneIndex, roomHash });
       absorbAnchor();
-      absorbRoom();
-      absorbFloorHint();
+      absorbHeight();
+      absorbFloorAnchor();
       const areaKey = area ? area.key : null;
       if (areaKey !== lastAreaKey) {
         lastAreaKey = areaKey;
@@ -658,13 +629,14 @@ function registerHotkeys() {
   // should rarely be needed for that — what's still invisible to everything
   // automatic is dropping through a hole to the floor below without crossing a
   // portal, since the zone flag doesn't change between floors. Not a fallback for
-  // that case — a first-class control.
-  // A manual change can produce two things the poll loop would otherwise pick up a tick
-  // later: the room it just taught us, and — for a floor with no entrance of its own —
-  // the stair crossing that places it. Drain both here so the map is right by the time
-  // you've let go of the key.
+  // that case — a first-class control, and the only way the app ever learns where a
+  // floor sits.
+  //
+  // The floor's HEIGHT isn't recorded here: you press the key on the stairs, and the
+  // stairs are between floors. It's taken a moment later, once your height settles —
+  // see areaTracker. What is drained here is the stair crossing, which places a floor
+  // that has no entrance of its own, so the map is right by the time you release the key.
   const announce = (area) => {
-    absorbRoom();
     absorbFloorAnchor();
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
@@ -869,7 +841,7 @@ app.whenReady().then(() => {
   // derived from, and the cached portal graph. The cache means the doorways are live
   // from the first tick, before the mapgenie guest has even finished loading.
   areas = areaStore.load();
-  tracker.setRooms(areas.rooms);
+  tracker.setHeights(areas.floorHeights);
   tracker.setWorldCalibration(loadCalibration());
   const cachedMeta = configStore.load('mapgenie-areas');
   if (cachedMeta) {

@@ -92,7 +92,7 @@ function keyOf(subregionId, floor) {
 function createTracker() {
   let meta = null;          // the extracted mapgenie graph
   let worldCal = null;      // the overworld affine, for placing entrances in game coords
-  let rooms = {};           // the learned roomHash -> areaKey table (from areas.json)
+  let heights = {};         // areaKey -> { h, n } : where each floor SITS (from areas.json)
 
   let doors = [];               // every known overworld-side entrance, in GAME coords
   let floorsBySub = new Map();  // subregionId -> ordered floor labels, for PageUp/PageDown
@@ -100,7 +100,6 @@ function createTracker() {
   let current = null;       // null = overworld; else { key, subregionId, floor, name }
   let lastPos = null;
   let lastNear = null;      // nearest known doorway + distance, for the readout
-  let lastRoom = null;      // the roomHash we last acted on
 
   // The insideFlag `current` was last derived from. Tracked separately from `current`
   // itself so a manual override (Insert / PageUp / PageDown) sticks: it isn't
@@ -113,88 +112,70 @@ function createTracker() {
   // the entrance POI's spot on the inset, so the pair is a free anchor — no clicking.
   let pendingAnchor = null;
 
-  // Set when a manual floor change teaches us where a room is. Drained by main, which
-  // owns areas.json and is the only thing allowed to write it.
-  let pendingRoom = null;
-
-  // Set when a manual floor change may also have supplied a free anchor for a floor
-  // that has none (see stepFloor). Resolved by main, which holds the transforms.
+  // Set when a floor change may also have supplied a free anchor for a floor that has
+  // none of its own (see stepFloor). Resolved by main, which holds the transforms.
   let pendingFloorAnchor = null;
 
-  // A SUGGESTION that the floor may have changed — never an action. Raised when you
-  // enter an unknown room having gained or lost a lot of height since the last room
-  // change. That is what a staircase looks like, but it is also what a long ramp or a
-  // deep shaft inside ONE floor looks like, so it is far too fragile to act on: a wrong
-  // automatic floor change silently teleports the marker to the wrong panel, which is
-  // worse than not moving it at all.
+  // --- Floors, by height -------------------------------------------------------
   //
-  // It earns its place for the case nothing else covers — DROPPING THROUGH A HOLE to
-  // the floor below. There's no portal, no transition prompt, and you may not even
-  // notice it happened; the map would just quietly be wrong. This says so, and you
-  // press PageDown, which both fixes it and teaches the room. Advice, then a decision
-  // that's still yours.
-  const FLOOR_HINT_HEIGHT = 12;   // game units of height change across one room change
-  let roomEntryHeight = null;     // height when the current room was entered
-  let floorHint = null;           // { dh } — drained by main for the log
-
-  // Ticks (at 30Hz) you must remain in one room before it's recorded against the current
-  // floor. This is the fix for the stairwell: pressing PageUp happens IN the stairs, so
-  // learning immediately records the one room that belongs to both floors. Waiting until
-  // you've settled records the room you actually walked into instead. ~1.5s.
-  const LEARN_DWELL_TICKS = 45;
-  let roomTicks = 0;              // consecutive ticks in the current room
-
-  // Do we actually BELIEVE the floor we're showing? Learning while we don't is how the
-  // table gets poisoned wholesale: walk down to B1F, explore for half a minute before
-  // pressing PageDown, and every B1F room you crossed gets written down as 1F. Next visit
-  // they'd all drag you back to the wrong floor.
+  // THE ROOM HASH DOES NOT WORK, and it can't be made to. It is not a floor id: the same
+  // hash appears at h=-13.7 AND h=-5.2 in The Gracious Hand's Vaults, and two of them
+  // flicker back and forth three times a second while you stand still. It's a spatial
+  // cell that spans floors vertically. Recording it against a floor taught the table
+  // contradictions, which then fought the player. That whole mechanism is gone.
   //
-  // The floor is trusted when something ASSERTED it — you pressed the key, you came in
-  // through an entrance that names the floor, or you walked into a room we already know.
-  // It stops being trusted the moment we see a move that could have been an unannounced
-  // floor change (the height jump), and stays untrusted until something asserts it again.
-  // Nothing is recorded in the meantime.
-  let trusted = false;
+  // Height is the ONLY signal that can separate floors, and this is not a preference —
+  // the game reports the SAME (x, y) on every floor of a dungeon. Floors differ in z and
+  // in nothing else, so no x/y signal, however clever, carries the information at all.
+  //
+  // ABSOLUTE height, not height CHANGE. Measured floor gaps run 5.8u (The Gracious Hand's
+  // Vaults) to 16.6u (Forgotten Tunnel), while the height wanders up to 4u WITHIN one
+  // floor. A change threshold would have to be below 5.8 and above 4 — a 1.8u window, and
+  // wrong in the next dungeon anyway. (A 12u threshold, picked from Forgotten Tunnel, is
+  // exactly what silently broke the last attempt.) So instead: stand on a floor, press the
+  // key, and the height that floor SITS at is recorded for this dungeon. After that your
+  // height picks the nearest floor, and no threshold is needed anywhere.
+  //
+  // The sample is taken once your height has SETTLED, not the instant you press the key —
+  // you press it on the stairs, and the stairs are between floors, which is the one height
+  // that belongs to neither.
+  const SETTLE_TICKS = 30;        // ~1s of height held steady before we believe it
+  const SETTLE_SPREAD = 1.5;      // game units: how flat "steady" has to be
+  const SWITCH_MARGIN = 1.5;      // a rival floor must beat the current one by this much
+  let heightWin = [];             // recent heights, for the settle test
+  let sampling = null;            // areaKey we're waiting to take a settled height for
+
+  let pendingHeight = null;       // { areaKey, h } — drained by main, which owns the file
 
   // Why the area last changed. Surfaced so the log can say WHY, not just what.
   let lastReason = null;
 
-  // A roomHash is only meaningful inside; -1 (0xFFFFFFFF) is the overworld sentinel.
-  const validRoom = (r) => Number.isInteger(r) && r !== -1;
-  const roomKey = (r) => (r >>> 0).toString(16).padStart(8, '0');
+  // Where does floor `key` sit? null if it's never been taught.
+  const floorHeight = (key) => (heights[key] && Number.isFinite(heights[key].h) ? heights[key].h : null);
 
-  // A room that has been seen on TWO different floors. A stairwell is exactly this — it
-  // physically spans both — and it can never be given one answer, so it is written down
-  // as ambiguous and then never used or overwritten again.
-  const AMBIGUOUS = '?';
+  // Record (or refine) the height of a floor. Averaged, so a second visit sharpens it
+  // rather than replacing it on the strength of one reading.
+  function learnHeight(areaKey, h) {
+    const prev = heights[areaKey];
+    const n = prev ? prev.n : 0;
+    const next = prev ? (prev.h * n + h) / (n + 1) : h;
+    heights[areaKey] = { h: next, n: n + 1 };
+    pendingHeight = { areaKey, h: next, n: n + 1, sample: h };
+  }
 
-  // Remember: this room is on this floor.
-  //
-  // The obvious moment to record it — the instant you press PageUp/PageDown — turns out
-  // to be the WORST one. That's when you're standing in the stairwell, which belongs to
-  // both floors at once. Learning it there taught the table a contradiction, and then the
-  // table fought you: walk into the stairwell, it flips you to the wrong floor, you
-  // correct it, it relearns, and the next time through it flips you the other way.
-  // (Observed live: room 1bc90b46 in The Gracious Hand's Vaults ping-ponged B1F/1F/B1F/1F.)
-  //
-  // Two rules kill that:
-  //   1. Learn on DWELL, not on the keypress — record whichever room you've settled in,
-  //      which is a real room on a real floor, not the stairs you were passing through.
-  //   2. A room that ever contradicts itself is marked AMBIGUOUS, permanently. That is
-  //      the stairwell, and the right thing to do with it is nothing at all.
-  function learnRoom(room, areaKey, label) {
-    if (!validRoom(room) || !areaKey) return;
-    const k = roomKey(room);
-    const prev = rooms[k];
-    if (prev === areaKey || prev === AMBIGUOUS) return;   // known, or known-unknowable
-
-    if (prev && prev !== areaKey) {
-      rooms[k] = AMBIGUOUS;
-      pendingRoom = { room: k, areaKey: AMBIGUOUS, label, conflict: prev };
-      return;
+  // Which floor of THIS dungeon does height h sit closest to? Only floors we've been
+  // taught can be chosen; an untaught floor is never guessed at.
+  function floorByHeight(subregionId, h) {
+    let best = null;
+    let bestD = Infinity;
+    for (const floor of floorsBySub.get(subregionId) || []) {
+      const key = keyOf(subregionId, floor);
+      const fh = floorHeight(key);
+      if (fh === null) continue;
+      const d = Math.abs(h - fh);
+      if (d < bestD) { bestD = d; best = { key, floor, dist: d }; }
     }
-    rooms[k] = areaKey;
-    pendingRoom = { room: k, areaKey, label };
+    return best;
   }
 
   function invertWorld(lng, lat) {
@@ -318,9 +299,9 @@ function createTracker() {
       worldCal = next;
       rebuild();  // the entrances' game coords are derived from this affine
     },
-    // The learned roomHash -> areaKey table, from areas.json.
-    setRooms(next) {
-      rooms = next || {};
+    // Where each floor sits, in game units. From areas.json.
+    setHeights(next) {
+      heights = next || {};
     },
 
     // Called every poll tick with { x, y, height, insideFlag, zoneIndex, roomHash }.
@@ -335,87 +316,65 @@ function createTracker() {
       const inside = pos.insideFlag !== 0;
       if (inside !== syncedInside) {
         syncedInside = inside;
+        heightWin = [];
         if (inside) {
-          // The entrance NAMES the floor it leads to, so the floor is trusted on the way
-          // in — which is what makes the arrival room safe to record.
           enterNearest(pos, `the game says you're inside (flag ${pos.insideFlag})`);
-          trusted = !!current;
+          // The entrance NAMES the floor it leads to, so this is an assertion as good as
+          // you pressing the key — start measuring where that floor sits.
+          sampling = current ? current.key : null;
         } else {
           current = null;
-          trusted = false;
+          sampling = null;
           lastReason = 'the game says you\'re in the overworld (flag 0)';
         }
-        lastRoom = pos.roomHash;
-        roomEntryHeight = pos.height;
-        roomTicks = 0;
         return current;
       }
 
       if (!current) return current;
 
-      // Still in the same room. Once you've SETTLED here — and only if we actually
-      // believe the floor — record it. Settling, rather than the instant you pressed the
-      // key, is what keeps the stairwell out of the table: you press PageUp while in the
-      // stairs (which belong to both floors), then walk into a room that belongs to one.
-      if (pos.roomHash === lastRoom) {
-        roomTicks += 1;
-        if (roomTicks === LEARN_DWELL_TICKS && trusted) {
-          learnRoom(pos.roomHash, current.key, `${current.name} ${current.floor}`.trim());
-        }
+      // Has the height SETTLED? Stairs and ramps are between floors, and a height taken
+      // mid-climb belongs to no floor at all — so we only believe a height once it's been
+      // flat for about a second.
+      heightWin.push(pos.height);
+      if (heightWin.length > SETTLE_TICKS) heightWin.shift();
+      const settled = heightWin.length === SETTLE_TICKS
+        && Math.max(...heightWin) - Math.min(...heightWin) <= SETTLE_SPREAD;
+
+      // Someone asserted a floor and we've now stopped moving vertically: THIS is where
+      // that floor sits. Recorded once per assertion.
+      if (settled && sampling) {
+        const h = heightWin.reduce((s, v) => s + v, 0) / heightWin.length;
+        learnHeight(sampling, h);
+        sampling = null;
         return current;
       }
 
-      // A new room. How much height did we gain or lose getting here? A staircase between
-      // floors shows up as a big number.
-      const dh = roomEntryHeight === null ? 0 : pos.height - roomEntryHeight;
-      lastRoom = pos.roomHash;
-      roomEntryHeight = pos.height;
-      roomTicks = 0;
-      if (!validRoom(pos.roomHash)) return current;
+      // Otherwise: let the height pick the floor. Only floors you've stood on and named
+      // can be chosen — an untaught floor is never guessed at — and a rival has to beat
+      // the floor we're showing by a clear margin, so walking a ramp can't make the map
+      // flicker between two panels.
+      if (!settled) return current;
+      const best = floorByHeight(current.subregionId, pos.height);
+      if (!best || best.key === current.key) return current;
+      const cur = floorHeight(current.key);
+      if (cur !== null && best.dist + SWITCH_MARGIN >= Math.abs(pos.height - cur)) return current;
 
-      const known = rooms[roomKey(pos.roomHash)];
-      // AMBIGUOUS — a room seen on two floors, i.e. a stairwell. It cannot answer the
-      // question, and pretending otherwise is what made the map ping-pong. Ignore it and
-      // hold the floor we're on; the room you walk into NEXT will settle it.
-      if (known === AMBIGUOUS) return current;
-
-      if (known && known !== current.key) {
-        const floor = known.split('|')[1] || '';
-        const from = current.floor;
-        current = { ...current, floor, key: known };
-        trusted = true;   // a room we know is an assertion — as good as you pressing the key
-        lastReason = `room ${roomKey(pos.roomHash)} is on ${floor || 'this floor'} (learned)`;
-        // The floor may never have been placed (an upper floor has no entrance of its
-        // own). You just came off the stair, so offer the crossing as its anchor —
-        // exactly as a manual floor change does. Main ignores it if the floor is already
-        // placed.
-        pendingFloorAnchor = {
-          subregionId: current.subregionId,
-          name: current.name,
-          fromFloor: from,
-          toFloor: floor,
-          areaKey: current.key,
-          gameX: pos.x,
-          gameY: pos.y,
-        };
-        return current;
-      }
-      if (known) { trusted = true; return current; }   // known, and already the right floor
-
-      // An unknown room. It tells us nothing on its own — a room change is NOT a floor
-      // change (one walk through Forgotten Tunnel crossed 8 rooms across 2 floors), so
-      // inferring from it would be wrong far more often than right. Hold the floor we're
-      // on.
-      //
-      // But a big height change getting here means we MIGHT just have changed floor
-      // without being told — a staircase, or a hole you fell through. Two things follow:
-      // say so (the hint), and stop trusting the floor, so nothing further is written
-      // down until you confirm it or a known room settles it. Recording rooms while
-      // possibly on the wrong floor is precisely how the table gets poisoned.
-      if (Math.abs(dh) >= FLOOR_HINT_HEIGHT) {
-        floorHint = { dh, room: roomKey(pos.roomHash) };
-        trusted = false;
-      }
+      const from = current.floor;
+      current = { ...current, floor: best.floor, key: best.key };
+      lastReason = `height ${pos.height.toFixed(1)} is ${best.dist.toFixed(1)}u from ${best.floor} `
+        + `(which sits at ${floorHeight(best.key).toFixed(1)})`;
+      // The floor may never have been placed — an upper floor has no entrance of its own.
+      // You just came off the stair, so offer the crossing as its anchor. Main ignores
+      // this if the floor already has a transform.
+      pendingFloorAnchor = {
+        subregionId: current.subregionId,
+        name: current.name,
+        fromFloor: from,
+        toFloor: best.floor,
+        areaKey: current.key,
+        gameX: pos.x,
+        gameY: pos.y,
+      };
       return current;
     },
 
@@ -433,22 +392,22 @@ function createTracker() {
       if (!lastPos) return current;
       if (current) {
         current = null;
+        sampling = null;
         lastReason = 'Insert';
       } else {
         enterNearest(lastPos, 'Insert');
+        sampling = current ? current.key : null;
       }
       syncedInside = lastPos.insideFlag !== 0;
-      lastRoom = lastPos.roomHash;
-      roomTicks = 0;
-      trusted = !!current;   // you told us; that's an assertion
+      heightWin = [];
       return current;
     },
 
-    // PageUp / PageDown: step a floor. It is not just an override — it is the only input
-    // that ever teaches the floor table. But NOT by recording the room you're standing in
-    // right now: that's the stairwell, which belongs to both floors, and writing it down
-    // is what made the map ping-pong. The room is recorded once you've SETTLED somewhere
-    // (see tick / LEARN_DWELL_TICKS), which is a room on exactly one floor.
+    // PageUp / PageDown: step a floor. It is not just an override — it is the ONLY input
+    // that ever teaches the app where a floor sits. But it does not record your height at
+    // the instant you press it: you press it on the stairs, and the stairs are between
+    // floors, which is the one height that belongs to neither. The height is taken once
+    // it has SETTLED (see tick), i.e. once you're standing on the floor you meant.
     stepFloor(delta) {
       if (!current) return current;
       const floors = floorsBySub.get(current.subregionId) || [];
@@ -459,8 +418,8 @@ function createTracker() {
       const from = current.floor;
       current = { ...current, floor: next, key: keyOf(current.subregionId, next) };
       lastReason = `${delta > 0 ? 'PageUp' : 'PageDown'} — you said ${next}`;
-      roomTicks = 0;   // restart the dwell: don't learn the stairs you're standing in
-      trusted = true;  // you told us; that's the strongest assertion there is
+      sampling = current.key;   // measure where this floor sits, once you've settled on it
+      heightWin = [];
 
       // A floor reached only by STAIRS has no entrance, so no free anchor ever lands on
       // it — it would stay uncalibrated forever, the marker would simply vanish there,
@@ -494,26 +453,17 @@ function createTracker() {
       return a;
     },
 
-    // Drains a newly learned roomHash -> areaKey pair, so main can persist it. Main owns
-    // areas.json; the tracker never writes it.
-    takeRoom() {
-      if (!pendingRoom) return null;
-      const r = pendingRoom;
-      pendingRoom = null;
-      return r;
-    },
-
-    // Drains a "you might have changed floor" suggestion. Advice only — the tracker has
-    // already declined to act on it.
-    takeFloorHint() {
-      if (!floorHint) return null;
-      const h = floorHint;
-      floorHint = null;
+    // Drains a newly measured floor height, so main can persist it. Main owns areas.json;
+    // the tracker never writes it.
+    takeHeight() {
+      if (!pendingHeight) return null;
+      const h = pendingHeight;
+      pendingHeight = null;
       return h;
     },
 
-    // Drains the stair crossing from the last manual floor change, so main can use it to
-    // place a floor that has no entrance of its own.
+    // Drains the stair crossing from the last floor change, so main can use it to place a
+    // floor that has no entrance of its own.
     takeFloorAnchor() {
       if (!pendingFloorAnchor) return null;
       const a = pendingFloorAnchor;
