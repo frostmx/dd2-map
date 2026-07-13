@@ -130,6 +130,34 @@
     "structBase": "0x3b8c4b10",
     "note": "Also validated (camera-rotation-invariant, real X/Z movement tracking, height stays flat on flat ground) — likely another duplicate copy of the same player position. Not currently used; kept as a fallback if 0x47a55e10 stops resolving."
   },
+  "cameraPosition": {
+    "note": "SOLVED 2026-07-13. The camera's position, as a Vec3 laid out like the player's (x @+0, height @+4, y @+8). The camera LOOKS AT the player, so the horizontal vector camera->player IS the view direction: heading = atan2(player.x - cam.x, player.y - cam.y). That is a real FACING angle, available while standing still — unlike the movement-derived heading, which has nothing to report when you stop. WIRED INTO THE APP (src/main/index.js ships `facing` on the position feed; it drives the marker arrow and the overlay's heading-up rotation). Facing crosses into map space as a look-ahead POINT, never as an angle — see FINDINGS.md.",
+    "foundVia": "tools/cameraHunt.js. Not a value scan — there is no value to scan for. The camera is the one thing in memory ON A LEASH: it stays a few units from the player through walking, sprinting, teleports and cell-boundary snaps, so the search key is a RELATION (a Vec3 that never leaves the leash), and float soup walks off it within a few metres. Then rotation separates it from everything else that follows the player: stand still, swing the mouse, and the camera is what MOVES WHILE THE PLAYER FLOATS ARE FROZEN.",
+    "existsInBothFrames": {
+      "note": "Like the player, the camera is stored in BOTH the cell-local frame and the absolute one. Verified, exactly: camGlobal - camLocal = (640.00, -1024.00) = (5, -8) cells = precisely the player's own cell offset, and the camera's offset from the player was identical in both frames to 3 decimals. Same camera, two coordinate systems. USE THE GLOBAL ONE — it sidesteps the floating origin, and it is what the app already reads for the player.",
+      "sessionOnlyLocal": "0x318f49c0",
+      "sessionOnlyGlobal": "0x552b5a80"
+    },
+    "fields": {
+      "x": "+0x0",
+      "height": "+0x4",
+      "y": "+0x8"
+    },
+    "stableChain": {
+      "note": "GLOBAL-frame camera. Narrowed 8148 -> 7529 (teleport) -> 5595 (save reload) -> 285 (FULL GAME RESTART), then live-verified: resolves through the restart, holds a constant 5.4u radius while the heading sweeps a full circle. The shortest surviving chain of the 285; the 6-hop ones nearly all share its tail [.., 0x18, 0x18, 0x5f8, 0x800], which is the camera object's real structure reached from many entry points.",
+      "module": "DD2.exe",
+      "staticOffset": "0x0F8E7ED0",
+      "offsets": ["0x198", "0x18", "0x18", "0x5F8", "0x800"],
+      "readOffsets": { "x": "0x0", "height": "0x4", "y": "0x8" }
+    },
+    "backupChains": [
+      { "staticOffset": "0x0F8D3158", "offsets": ["0x18", "0x788", "0x18", "0x18", "0x5F8", "0x800"] },
+      { "staticOffset": "0x09976768", "offsets": ["0x800", "0x198", "0x18", "0x18", "0x5F8", "0x800"] }
+    ],
+    "candidateFiles": "tools/camera.global.chains.json (285 restart-survivors, the wired one is in here), tools/camera.local.chains.json (the local-frame scan — kept only as a record; prefer global)",
+    "notAStatic": "The camera is NOT in module-static memory. All 92MB of DD2.exe's writable .data was swept and every leashed Vec3 there was walked off the leash within a few metres. Don't look for a static mirror the way staticLocalPosition has one — it isn't there.",
+    "notTheBones": "A first pass ranked candidates by TIGHTEST leash and returned 548 hits sitting 0.3-0.7u from the player, all of them 'moving while you stood still'. Those are SKELETON BONES: the idle animation sways them while the root position is frozen, so they pass the rotation test exactly like a camera does. What separates them is how far they ROAM while you stand still — swing the mouse and the camera sweeps metres of arc at constant radius, while a bone jiggles centimetres. Rank by roam, not by proximity."
+  },
   "dungeonZoneIndex": {
     "note": "Found via CE value-scanning (2026-07-13). insideFlag is WIRED INTO THE APP (src/main/index.js, src/main/areaTracker.js) and replaced the doorway-proximity guess for the in/out decision. zoneIndex is NOT yet usable — see its note. Module-static, no pointer chain (same category of read as staticLocalPosition), so expected restart-stable by construction; the user observed both values unchanged across a full game restart. Not yet tested across a DD2 game-version update.",
     "insideFlag": {

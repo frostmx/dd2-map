@@ -236,6 +236,76 @@ function cmdValidate(inFile, outFile) {
   console.log(`Saved ${kept.length} to ${out}.` + (kept.length > 8 ? ' Reload and validate again to narrow further.' : ' Small enough — pick one and wire it in.'));
 }
 
+// The CAMERA's version of the same idea. The global's test is "sits on the 128-grid"; the
+// camera's is "sits on the player's LEASH" — a few units away, orbiting.
+//
+// The FRAME decides how much that test is worth, and it is worth a great deal more in the
+// global one. Near the local coords a stray Vec3 lands within a few metres of the player
+// by sheer accident all the time: they are small numbers wrapped into a 128-unit box, and
+// the float soup is full of small numbers. The global coords are large and specific — a
+// junk pointer landing within a few metres of (626.88, -1029.47) on BOTH axes essentially
+// doesn't happen. Same test, orders of magnitude fewer coincidences.
+//
+// The camera exists in both frames (verified: camGlobal - camLocal was exactly the
+// player's cell offset, (5, -8) cells, and the camera's offset from the player was
+// identical in both). So prefer --global and use the strong version.
+const CAM_MIN = 0.2, CAM_MAX = 12.0, CAM_DH_MIN = -4.0, CAM_DH_MAX = 12.0;
+
+function isOnLeash(c, ref) {
+  if (!Number.isFinite(c.x) || !Number.isFinite(c.h) || !Number.isFinite(c.y)) return false;
+  const dh = c.h - ref.h;
+  if (dh < CAM_DH_MIN || dh > CAM_DH_MAX) return false;
+  const d = Math.hypot(c.x - ref.x, c.y - ref.y);
+  return d >= CAM_MIN && d <= CAM_MAX;
+}
+
+// The player's global position, via the chain the app itself ships with.
+const GLOBAL_STATIC = 0x0fd26358n, GLOBAL_OFFS = [0x1a8, 0x410];
+const GLOBAL_FALLBACK_STATIC = 0x0f8e1130n, GLOBAL_FALLBACK_OFFS = [0x210, 0x50];
+
+function readGlobal(h, modBase, loc) {
+  const onGrid = (g, l) => Number.isFinite(g) && Math.abs((g - l) / CELL - Math.round((g - l) / CELL)) < 0.05;
+  for (const [st, offs] of [[GLOBAL_STATIC, GLOBAL_OFFS], [GLOBAL_FALLBACK_STATIC, GLOBAL_FALLBACK_OFFS]]) {
+    try {
+      const a = resolvePointerChain(h, modBase + st, offs);
+      const b = readMemory(h, a, 12);
+      const g = { x: b.readFloatLE(0), h: loc.h, y: b.readFloatLE(8) };
+      if (onGrid(g.x, loc.x) && onGrid(g.y, loc.y)) return g;
+    } catch { /* try the fallback */ }
+  }
+  throw new Error('cannot read the player global position');
+}
+
+function cmdValidateCam(inFile, outFile, frameArg) {
+  const data = JSON.parse(fs.readFileSync(inFile, 'utf8'));
+  const { h, modBase } = attach();
+  const loc = readLocal(h, modBase);
+  const useGlobal = frameArg === '--global';
+  const ref = useGlobal ? readGlobal(h, modBase, loc) : loc;
+  console.log(`Validating ${data.chains.length.toLocaleString()} camera chains against the ` +
+    `${useGlobal ? 'GLOBAL' : 'local'} player at x=${ref.x.toFixed(2)} h=${ref.h.toFixed(2)} y=${ref.y.toFixed(2)}`);
+
+  const kept = [];
+  for (const c of data.chains) {
+    try {
+      const staticBase = modBase + BigInt(c.staticOffset);
+      const offs = c.offsets.map((o) => Number(BigInt(o)));
+      const addr = resolvePointerChain(h, staticBase, offs);
+      const b = readMemory(h, addr, 12);
+      const cam = { x: b.readFloatLE(0), h: b.readFloatLE(4), y: b.readFloatLE(8) };
+      if (isOnLeash(cam, ref)) kept.push(c);
+    } catch { /* unresolvable this session — drop */ }
+  }
+
+  console.log(`  survivors: ${kept.length.toLocaleString()} / ${data.chains.length.toLocaleString()}`);
+  for (const c of kept.slice(0, 25)) console.log(`    DD2.exe+${c.staticOffset}  [${c.offsets.join(', ')}]`);
+  if (kept.length > 25) console.log(`    ... and ${kept.length - 25} more`);
+
+  const out = outFile || inFile;
+  fs.writeFileSync(out, JSON.stringify({ ...data, count: kept.length, chains: kept, validatedAt: new Date().toISOString() }, null, 0));
+  console.log(`Saved ${kept.length} to ${out}.` + (kept.length > 8 ? ' Travel far away (or reload) and validate again.' : ' Small enough — pick one and verify with cameraHunt watch.'));
+}
+
 // Directly locate the CURRENT global-position Vec3 in memory (no walking needed):
 // scan for a triplet (x,h,y) where each equals local + k*128 with integer k.
 function cmdFindGlobal() {
@@ -317,6 +387,7 @@ const [, , cmd, a1, a2, a3, a4] = process.argv;
 try {
   if (cmd === 'scan') cmdScan(a1, a2 || 'chains.json', a3 ? parseInt(a3, 10) : 7, a4 ? parseInt(a4, 10) : 2048);
   else if (cmd === 'validate') cmdValidate(a1, a2);
+  else if (cmd === 'validatecam') cmdValidateCam(a1, a2, a3);
   else if (cmd === 'findglobal') cmdFindGlobal();
   else if (cmd === 'resolve') cmdResolve(a1);
   else {

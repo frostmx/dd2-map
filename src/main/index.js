@@ -72,6 +72,26 @@ const GLOBAL_Y_OFFSET = 0x8n;
 const LOCAL_MIRROR_OFFSET = 0x0fa65f70n;
 const CELL = 128;
 
+// The CAMERA's position, in the SAME absolute frame as the global chain above
+// (X @ +0, height @ +4, Y @ +8). Found 2026-07-13 by tools/cameraHunt.js and
+// narrowed across teleport + reload + full restart; see config/dd2.offsets.json.
+//
+// This is where FACING comes from. The camera looks AT the player, so the horizontal
+// vector camera->player IS the view direction — a real facing angle, unlike the
+// movement-derived heading, which has nothing to report the moment you stand still.
+const CAMERA_STATIC_OFFSET = 0x0f8e7ed0n;
+const CAMERA_OFFSETS = [0x198, 0x18, 0x18, 0x5f8, 0x800];
+// Same object reached by a different path — used if the primary misses a tick.
+const CAMERA_FALLBACK_STATIC_OFFSET = 0x0f8d3158n;
+const CAMERA_FALLBACK_OFFSETS = [0x18, 0x788, 0x18, 0x18, 0x5f8, 0x800];
+
+// Below this the camera->player vector is too short to carry a direction (the camera
+// has passed through the player: a cutscene, or a wall shoving it in tight). Observed
+// orbit is ~5u in normal play and ~1.4u at a hard upward pitch, so 0.35 only rejects
+// the degenerate case. On reject we send no facing and the map holds its last heading,
+// which beats snapping the arrow to a direction invented from noise.
+const CAMERA_MIN_DIST = 0.35;
+
 // Dungeon zone state, straight from the game — no pointer chain, same kind of read as
 // the local mirror above. Found by CE value-scanning (2026-07-13; see
 // config/dd2.offsets.json). Three fields we care about, so one read covers them all:
@@ -156,7 +176,97 @@ let lastAreaKey = null;              // for edge detection on the broadcast
 
 function pushAreas() {
   tracker.setHeights(areas.floorHeights);   // where each floor sits, in game units
+  tracker.setPlaces(areas.places);          // the buildings you've named with Home
   broadcast('areas:state', areas);
+}
+
+// Home: "this interior is that building." The game's inside-flag fires for every house
+// and inn, none of which mapgenie draws an inset for — so there's nothing to calibrate
+// and nothing to move. Only the NAME is missing, and one key press supplies it, for good.
+function rememberPlace() {
+  const r = tracker.rememberPlace();
+  if (!r) return;
+  if (r.code === 'none') {
+    console.log('[areas] nothing to remember — no place POIs loaded yet (the map graph '
+      + "hasn't arrived).");
+    return;
+  }
+  if (r.code === 'too-far') {
+    console.log(
+      `[areas] nearest place is "${r.title}" (${r.category}), ${r.dist.toFixed(0)}u away — `
+      + `too far to be the room you're in (limit ${r.radius}u), so nothing was remembered.`,
+    );
+    return;
+  }
+  const rec = tracker.takePlace();
+  if (!rec) return;
+  areas.places[rec.poiId] = rec;
+  areaStore.save(areas);
+  pushAreas();
+  console.log(
+    `[areas] remembered this doorway as "${rec.title}" (${rec.category}, `
+    + `${rec.dist.toFixed(0)}u from its map icon). No dungeon will be guessed here again.`,
+  );
+}
+
+// The tracker says WHAT it's unsure about; this says it in English, with the key that
+// settles it. It lives here rather than in the tracker because the hotkeys are config,
+// and it's used twice — the console line and the overlay's readout — which have to agree.
+let lastHintId = null;
+function describeHint(h) {
+  if (!h) return null;
+  const keys = cfg.hotkeys;
+  const floor = h.floor ? ` ${h.floor}` : '';
+
+  // "It's a building, and it's called X" — offered whenever we have a named place near
+  // enough to be the room you're standing in. This is the answer far more often than
+  // "it's a dungeon" is: the game has a hundred houses and inns for every cave.
+  const remember = (h.place && h.place.reachable)
+    ? `${keys.rememberPlace} — remember this as ${h.place.title} (${h.place.category})`
+    : null;
+  const nearestPlace = h.place
+    ? `nearest place: ${h.place.title} (${h.place.category}) · ${h.place.dist.toFixed(0)}u`
+    : null;
+
+  switch (h.code) {
+    case 'enter':
+      return {
+        code: h.code,
+        title: 'Inside something — but what?',
+        detail: `nearest entrance: ${h.name}${floor} · ${h.dist.toFixed(0)}u away `
+          + `(too far to be the door you just used — limit ${h.radius}u), so you're `
+          + `still being drawn on the overworld${nearestPlace ? `\n${nearestPlace}` : ''}`,
+        actions: [
+          remember,
+          `${keys.areaToggle} — it really is ${h.name}, go in`,
+        ].filter(Boolean),
+      };
+    case 'no-doors':
+      return {
+        code: h.code,
+        title: 'Inside something — no entrances known',
+        detail: nearestPlace || "mapgenie's portal graph hasn't loaded yet",
+        actions: [remember].filter(Boolean),
+      };
+    case 'floor-unknown':
+      return {
+        code: h.code,
+        title: `${h.name}${floor} — this floor has never been placed`,
+        detail: `you're at height ${h.height.toFixed(1)}`,
+        actions: [`${keys.floorUp} / ${keys.floorDown} — name the floor you're on`],
+      };
+    case 'floor-off':
+      return {
+        code: h.code,
+        title: `${h.name} — the floor may be wrong`,
+        detail: `showing ${h.floor || 'the only floor'} (sits at ${h.sits.toFixed(1)}); `
+          + `you're at ${h.height.toFixed(1)}, ${h.off.toFixed(1)}u off — no floor we know `
+          + 'fits that',
+        actions: [`${keys.floorUp} / ${keys.floorDown} — name the floor you're on`],
+      };
+    default:
+      return null;
+  }
 }
 
 // The shared inset linear part, measured from mapgenie's own data — no calibration.
@@ -215,14 +325,16 @@ function absorbAnchor() {
     c,
     f,
     auto: true,
+    // How far you stood from that doorway when the game said "inside". It IS the
+    // anchor's error, so it's the error of this whole transform — worth keeping next to
+    // it, so a placement that later looks off can be explained rather than re-guessed.
+    // The tracker won't hand over an anchor beyond `dungeonEnterRadius` unless you
+    // forced the entry with Insert, so a large number here means you insisted.
+    dist: anchor.dist,
     points: [{ gameX: anchor.gameX, gameY: anchor.gameY, lng: anchor.lng, lat: anchor.lat }],
   };
   areaStore.save(areas);
   pushAreas();
-  // How far the player was from the nearest KNOWN doorway at the instant the game's
-  // own zone flag said "you're in here" — not a detection radius any more, just how
-  // far off this anchor (and therefore the auto placement) is likely to be. Sets how
-  // big a Refine shift you'd need if it looks off.
   console.log(
     `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
     `(${anchor.dist.toFixed(1)}u from the nearest known doorway)`,
@@ -371,6 +483,31 @@ function startMemoryPolling() {
       }
       if (!g) return; // both unresolved this tick (e.g. mid-load); skip, keep handle
 
+      // Facing, from the camera. Unit vector in GAME coords pointing where you LOOK.
+      // Never fatal: if the chain misses a tick the position feed carries on without it
+      // and the map keeps the heading it had.
+      const readCamera = (staticOff, offs) => {
+        const addr = resolvePointerChain(readerHandle, moduleBase + staticOff, offs);
+        const buf = readMemory(readerHandle, addr, 12);
+        return { x: buf.readFloatLE(0), y: buf.readFloatLE(8) };
+      };
+      const facingFrom = (cam) => {
+        const dx = g.x - cam.x;
+        const dy = g.y - cam.y;
+        const len = Math.hypot(dx, dy);
+        if (!Number.isFinite(len) || len < CAMERA_MIN_DIST) return null;
+        return { x: dx / len, y: dy / len };
+      };
+      let facing = null;
+      try {
+        facing = facingFrom(readCamera(CAMERA_STATIC_OFFSET, CAMERA_OFFSETS));
+      } catch { /* fall through to the backup path */ }
+      if (!facing) {
+        try {
+          facing = facingFrom(readCamera(CAMERA_FALLBACK_STATIC_OFFSET, CAMERA_FALLBACK_OFFSETS));
+        } catch { /* no facing this tick — the map holds its last heading */ }
+      }
+
       // Dungeon zone state: roomHash, insideFlag and zoneIndex all sit in one 32-byte
       // window, so one read gets all three.
       const zoneBuf = readMemory(readerHandle, moduleBase + ZONE_WINDOW_OFFSET, ZONE_WINDOW_SIZE);
@@ -391,16 +528,36 @@ function startMemoryPolling() {
         console.log(`[areas] now in: ${where}  <- ${tracker.reason() || 'startup'}`);
       }
 
+      // The guesses we DIDN'T make. Logged on change only — it's a 30Hz loop.
+      const hint = describeHint(tracker.hint());
+      const hintId = hint ? `${hint.code}|${hint.title}` : null;
+      if (hintId !== lastHintId) {
+        lastHintId = hintId;
+        if (hint) {
+          const acts = hint.actions.length ? `\n           ${hint.actions.join('\n           ')}` : '';
+          console.log(`[areas] ${hint.title} — ${hint.detail.replace(/\n/g, ' — ')}${acts}`);
+        }
+      }
+      const place = tracker.place();
+
       broadcast('game-position', {
         x: g.x,
         y: g.y,
         height,
         localX,
         localY,
+        facing,                 // unit vector in GAME coords, or null (see CAMERA_*)
         areaKey,
         areaName: area ? area.name : null,
         areaFloor: area ? area.floor : null,
         near: tracker.near(),   // nearest doorway + distance, for the readout
+        inside: insideFlag !== 0,   // the game's own flag: a dungeon OR any building
+        // The named building you're standing in, if you've taught us this doorway (Home).
+        // Moves nothing — indoors the game still reports true world coords, so the marker
+        // is already right; this only says WHERE right is.
+        placeName: place ? place.title : null,
+        placeCategory: place ? place.category : null,
+        hint,                   // what we're unsure about, and what settles it (or null)
       });
     } catch (err) {
       // DD2.exe likely closed or the chain didn't resolve this tick — drop the
@@ -641,6 +798,8 @@ function registerHotkeys() {
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
   bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));
+  // The far commoner answer to "what did I just walk into": not a dungeon, a building.
+  bind(cfg.hotkeys.rememberPlace, 'remember this building', rememberPlace);
   bind(cfg.hotkeys.floorUp, 'floor up', () => announce(tracker.stepFloor(1)));
   bind(cfg.hotkeys.floorDown, 'floor down', () => announce(tracker.stepFloor(-1)));
 }
@@ -718,7 +877,7 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
 });
 
 // Boolean overlay settings toggled from the control window.
-const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading'];
+const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
   if (!SETTING_KEYS.includes(key)) return;
   cfg[key] = !!value;
@@ -770,14 +929,21 @@ let areaMetaFingerprint = null;
 
 ipcMain.handle('areas:metadata', (_event, meta) => {
   if (!meta || !Array.isArray(meta.portals)) return false;
-  const fingerprint = `${meta.portals.length}|${Object.keys(meta.subregions || {}).length}|${meta.locationCount}`;
+  // `pois` is part of the fingerprint, not just a passenger: without it, a cache written
+  // before named places existed has an IDENTICAL fingerprint to a fresh extraction that
+  // has them, so the new graph would be dropped and buildings would never work.
+  const fingerprint = `${meta.portals.length}|${Object.keys(meta.subregions || {}).length}`
+    + `|${(meta.pois || []).length}|${meta.locationCount}`;
   if (fingerprint === areaMetaFingerprint) return true;
   areaMetaFingerprint = fingerprint;
 
   configStore.save('mapgenie-areas', meta);
   areaMeta = meta;
   tracker.setMetadata(meta);
-  console.log(`[areas] ${tracker.doorCount()} dungeon doorways placed in game coords`);
+  console.log(
+    `[areas] ${tracker.doorCount()} dungeon doorways and ${tracker.poiCount()} named places `
+    + 'placed in game coords',
+  );
   ensureInsetLinear();
   return true;
 });
@@ -842,6 +1008,9 @@ app.whenReady().then(() => {
   // from the first tick, before the mapgenie guest has even finished loading.
   areas = areaStore.load();
   tracker.setHeights(areas.floorHeights);
+  tracker.setEnterRadius(cfg.dungeonEnterRadius);  // how near a doorway "inside" must be
+  tracker.setPlaceRadius(cfg.placeRadius);         // ...and how big a building is
+  tracker.setPlaces(areas.places);                 // the buildings you've already named
   tracker.setWorldCalibration(loadCalibration());
   const cachedMeta = configStore.load('mapgenie-areas');
   if (cachedMeta) {

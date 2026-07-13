@@ -17,6 +17,48 @@
       background: transparent;
     }
 
+    /* Area readout. The app is guessing about two things it cannot know on its own —
+       which building you just walked into, and which floor you're on — and until now
+       those guesses were invisible: the marker simply went somewhere wrong, or nowhere.
+       This is where it admits it, and names the key that fixes it.
+
+       Its own element, NOT part of the map: the webview carries an opacity and a
+       brightness filter (see applyOpacity/applyBrightness) that would make text
+       unreadable. pointer-events:none because the overlay is click-through — this must
+       never eat a click meant for the game. */
+    #areaHud {
+      position: fixed; top: 14px; left: 14px; z-index: 11;
+      pointer-events: none;
+      max-width: 340px;
+      padding: 8px 11px;
+      border-radius: 6px;
+      border-left: 3px solid #4b6a86;
+      background: rgba(10, 13, 17, 0.72);
+      color: #dfe7ee;
+      font: 12px/1.45 "Segoe UI", system-ui, sans-serif;
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+      transition: opacity 140ms ease-out;
+    }
+    #areaHud[hidden] { display: none; }
+    /* Something's unsure and it's waiting on you: amber, and louder than the rest. */
+    #areaHud.asking { border-left-color: #e2a03f; }
+
+    #hudWhere { font-weight: 600; }
+    /* The detail carries a second line (the nearest named place) when there is one. */
+    #hudDetail { white-space: pre-line; }
+    #hudNear, #hudDetail { color: #93a3b1; }
+    #hudTitle { margin-top: 5px; color: #f0b757; font-weight: 600; }
+    #hudAction { margin-top: 3px; color: #ffffff; }
+    #hudAction b {
+      display: inline-block;
+      padding: 0 5px;
+      margin-right: 4px;
+      border-radius: 3px;
+      background: rgba(255, 255, 255, 0.16);
+      font-family: ui-monospace, Consolas, monospace;
+    }
+    #areaHud .empty { display: none; }
+
     /* Alt-held cue: the overlay is holding the mouse right now, so clicks are
        NOT reaching the game. Without this it's invisible state. */
     #interactiveCue {
@@ -41,6 +83,17 @@
     webpreferences="backgroundThrottling=no"
     allowpopups
   ></webview>
+
+  <!-- Where you are, what's near, and — when the app is only guessing — what to press.
+       Hidden until there's something to say (see updateHud in overlay.js). -->
+  <div id="areaHud" hidden>
+    <div id="hudWhere"></div>
+    <div id="hudNear"></div>
+    <div id="hudTitle"></div>
+    <div id="hudDetail"></div>
+    <div id="hudAction"></div>
+  </div>
+
   <div id="interactiveCue"></div>
 
   <script src="calibration.js"></script>

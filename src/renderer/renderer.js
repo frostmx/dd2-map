@@ -312,6 +312,12 @@ function wireCheckbox(key, id) {
 wireCheckbox('autoZoom', 'autoZoom');
 wireCheckbox('hideFound', 'hideFound');
 wireCheckbox('rotateWithHeading', 'rotateWithHeading');
+//   areaHud — on by default; the overlay's area readout: where you are, the nearest
+//             dungeon, and what to press when the app can't work it out on its own
+//             (which building you entered, which floor you're on). Off if you'd rather
+//             the overlay were map and nothing else — the same lines stay in the
+//             readout above.
+wireCheckbox('areaHud', 'areaHud');
 
 nextPointBtn.addEventListener('click', () => armNextClick());
 
@@ -556,6 +562,18 @@ window.dd2.onGamePosition((data) => {
   if (data.near) {
     lines += `\ndoor  ${data.near.name}  ${data.near.dist.toFixed(1)}u`;
   }
+  // What the app is unsure about, and the key that settles it — the same text the
+  // overlay shows, so the two windows never tell you different stories. Chiefly: the
+  // game's "inside" flag fires for buildings too, and the nearest entrance is only
+  // believed within dungeonEnterRadius, so walking into a house says so here instead of
+  // silently calibrating a dungeon on the other side of the map.
+  if (data.placeName) {
+    lines += `\nin    ${data.placeName}${data.placeCategory ? ` (${data.placeCategory})` : ''}`;
+  }
+  if (data.hint) {
+    lines += `\n\n${data.hint.title}\n${data.hint.detail}`;
+    for (const a of data.hint.actions || []) lines += `\n${a}`;
+  }
   coordsEl.textContent = lines;
 
   if (calibration) {
@@ -581,7 +599,11 @@ window.dd2.onGamePosition((data) => {
       const moved = !prevGamePos
         || Math.hypot(data.x - prevGamePos.x, data.y - prevGamePos.y) > 0.15 ? 1 : 0;
       prevGamePos = { x: data.x, y: data.y };
-      runInWebview(`window.__dd2_apply && window.__dd2_apply(${lngLat.lng}, ${lngLat.lat}, ${follow}, ${moved})`);
+      // Where you're LOOKING, through the same transform as where you ARE. null when the
+      // camera chain missed a tick — the guest then falls back to the movement heading.
+      const ahead = window.DD2Calib.aheadPoint(transform, data.x, data.y, data.facing);
+      const aheadArgs = ahead ? `, ${ahead.lng}, ${ahead.lat}` : '';
+      runInWebview(`window.__dd2_apply && window.__dd2_apply(${lngLat.lng}, ${lngLat.lat}, ${follow}, ${moved}${aheadArgs})`);
       maybeGlideToSavedZoom(lngLat);
     }
   }
