@@ -90,11 +90,73 @@ in `memoryReader.js:resolvePointerChain`.) DD2.exe module base = `0x140000000`
 original capture, a reload, AND a full restart — a deterministic singleton
 (player manager?). Fallback anchor if the chain ever breaks.
 
+### Camera position (solved 2026-07-13) — a real facing angle
+The camera is a Vec3 laid out exactly like the player's (`x @+0, h @+4, y @+8`), and it
+exists in **both** frames, like the player: `camGlobal - camLocal` came out as exactly
+`(640, -1024)` = `(5, -8)` cells = *precisely* the player's own cell offset, with the
+camera's offset from the player identical in both frames to 3 decimals. Use the **global**
+one (`config/dd2.offsets.json` → `cameraPosition.stableChain`) — it sidesteps the floating
+origin and matches the frame the app already reads.
+
+Why it's worth having: **the camera looks at the player**, so the horizontal vector
+`camera -> player` *is* the view direction. `heading = atan2(px - cx, py - cy)` is a true
+facing angle that works **while standing still** — which the movement-derived
+`__dd2_heading__` fundamentally cannot do (stop moving and it has nothing to report).
+
+**Wired in.** Main ships `facing` (a unit vector in GAME coords) on the position feed; both
+renderers turn it into a **look-ahead point** — the player pushed 25u along it, through the
+*same* transform as the player — and the guest projects both points and takes the pixel
+angle (`setHeadingFromAhead`). It feeds the existing `__dd2_heading__`, so the marker arrow
+and the heading-up bearing consume it unchanged. If the camera chain misses a tick, the
+guest silently falls back to the old movement heading.
+
+**Facing must cross into map space as a POINT, not an angle.** The vector itself is
+calibration-independent (it's just player - camera), but *drawing* it isn't: the affine's
+`b`/`d` cross-terms carry the rotation between the game's axes and mapgenie's north-up
+ones, and a dungeon inset applies its own transform on top. Convert the angle by hand and
+the arrow disagrees with the direction the marker actually slides — wrong in the overworld,
+wrong differently underground. Project two points that both went through the real transform
+and the rotation comes along for free (the translation cancels in the subtraction, so only
+the linear part survives, which is exactly the correction wanted). On the current
+calibration that rotation happens to be 0.09°, so a hand-converted angle would *look* fine
+and quietly break on a recalibration or in an inset.
+
+**How it was found (`tools/cameraHunt.js`) — a relation, not a value.** There is no value
+to scan for. But the camera is the one thing in memory **on a leash**: it stays a few units
+from the player through walking, sprinting, teleports and cell-boundary snaps. So the
+search key is a *relation* — a Vec3 that never leaves the leash — and float soup walks off
+it within a few metres of running. Rotation then does the naming: stand still, swing the
+mouse, and the camera is the thing that **moves while the player floats are frozen**.
+
+Three traps, each of which cost a run:
+- **Rank by ROAM, not by proximity.** The first pass ranked by tightest leash and returned
+  548 hits sitting 0.3–0.7u from the player, all "moving while you stood still" — those are
+  **skeleton bones**. The idle animation sways them while the root position is frozen, so
+  they pass the rotation test exactly like a camera. What separates them: swing the mouse
+  and the camera sweeps *metres* of arc at constant radius; a bone jiggles centimetres.
+- **Measure the roam RELATIVE TO THE PLAYER.** Boxing the candidate's absolute position
+  measures where *you walked*, not what the camera did — local coords wrap ±128 at every
+  cell boundary, so it reported a "148u arc" under a 12u leash. That was the map, not the
+  camera.
+- **In the local frame the leash must be TIGHT.** Local coords are cell-relative and wrap
+  inside a 128-unit box, so a generous leash spans much of the reachable range and the soup
+  simply sits inside it forever: a 30u leash stalled at 2.3M candidates that could not be
+  walked off. (In the *global* frame this problem largely vanishes — coords are large and
+  specific, and junk landing within metres of them on both axes essentially doesn't happen.
+  Same reason `pointerScan validatecam --global` narrows and the local one barely does.)
+
+**It is NOT module-static.** All 92MB of DD2.exe's writable `.data` was swept; every leashed
+Vec3 there was walked off the leash. Unlike `staticLocalPosition`, there is no static mirror
+to find — don't go looking for one. Hence the pointer chain, narrowed
+8148 → 7529 (teleport) → 5595 (save reload) → **285 (full game restart)**.
+
 ### Dead ends / corrections (so we don't repeat them)
 - First "position" found (`0x3b8c4c60` struct) was **camera position, not player** —
   it moved when only rotating the camera. Discriminators that separated them:
   (1) camera-rotation-invariance, (2) jump raises/lowers height, (3) large smooth
-  X/Z change on walk while height stays flat.
+  X/Z change on walk while height stays flat. (That address was then *discarded* rather
+  than recorded, so the camera had to be re-found from scratch later. It is now written
+  down properly — see above.)
 - Raw session addresses (`0x47a55e10`, `0x3ea477c0`, `0x43b6bc20`, `0x4889d4a0`
   across rounds) all reallocate — never hardcode one; that's why the pointer chain
   exists.
@@ -498,6 +560,74 @@ cave, which is worse than an uncalibrated one.
 Not auto-reachable: **Vernworth - Southern Ruins** and **Sealed Mining Shaft** — no
 entrance edge exists in mapgenie's data at all. They need manual calibration.
 
+### mapgenie's category taxonomy (verified live — this is what any FILTER would be built on)
+
+Every POI carries `category_id`, every category belongs to a **group**, and the groups are
+exactly the headings the site's own filter sidebar renders. Read from the guest's Redux
+store (identical on `?embed=light` and the full map, so the embed we load has all of it):
+
+| path | what |
+|---|---|
+| `store.getState().map.groups` | `{ id, title }` — the 8 groups below |
+| `store.getState().map.categories` | `{ id, group_id, title, icon, order, locations_count, premium, … }` |
+| `store.getState().map.locationsById[id].category_id` | which category a POI is in |
+| `store.getState().map.locationsByCategory` | the reverse index, already built |
+| `store.getState().map.categoryIds` | the ids in display order |
+
+The 8 groups, with their categories and POI counts (DD2, 2026-07):
+
+| group | categories (count) |
+|---|---|
+| **Locations** | Area (19), Portcrystal (11), Waypoint (111), Campsite (84), Dungeon (106), **Transition (260)**, Settlement (10) |
+| **Facilities** | Riftstone (11), Ox Station (6), Apothecary (10), Peddler (7), **Inn (12)**, Barberie (2), Tavern (4), Forgotten Riftstone (90), Armory (9), Vocation Guild (3), Bordelrie (1), Oracle (2), Mortuary (2) |
+| **Key Items** | Seeker's Token (240), Implement (25), Golden Beetle (82), Key (4), Wakestone Shard (80), Ferrystone (47), Key Item (2) |
+| **Equipment** | Weapon (149), Armor (151), Cloak (28), Ring (48), Ammunition (35) |
+| **Items** | Grimoire (84), Valuable (270), Material (90), Curative (1253), Chest (435), Loot Pile (597) |
+| **Quests** | Main Quest (26), Side Quest (48) |
+| **Enemies** | Enemy (704), Boss (124) |
+| **Other** | Miscellaneous (21), NPC (46) |
+
+Match on the group **title**, never the id (`Locations` is 1770, `Facilities` 1777 — those
+are *this map's* numbers and mean nothing on another game).
+
+`Transition` is the odd one: those POIs **are the doorways** — the same objects the portal
+graph is parsed out of — and their titles name a destination floor ("Waterfall Cave 1F"),
+not a place you can stand in. Exclude it from anything that means "where am I".
+
+For a future filter UI this is everything needed: 5,372 POIs, 8 groups, 39 categories, with
+counts, icons and display order already supplied. Note POIs all live on **one** Mapbox
+layer (`locations`), and *found* state is a **feature-state paint expression**, not a layer
+or a filterable property (see "Found POIs are a paint expression"), so a
+category filter has to work on the category property, not by hiding layers.
+
+### Named places: most interiors are BUILDINGS, and buildings are POIs, not insets
+
+The inside-flag fires for every house, shop and inn — and mapgenie draws an inset for none
+of them, so there is no panel to place the marker on and no entrance in the portal graph to
+match. This is *why* the unbounded nearest-entrance rule went wrong (above): it was being
+asked which dungeon a tavern was.
+
+But nothing needs placing. **Indoors, DD2 still reports true world coordinates**, so inside
+a house you are already drawn in the right house. The only thing missing is the **name** —
+and mapgenie has it, as an ordinary POI in the `Locations`/`Facilities` groups ("Kough's
+Inn", category Inn; 475 of them on the overworld).
+
+Nothing in memory links the interior you're standing in to that POI, and no geometry can
+supply it (the flag says *inside*, not *inside what*). So it is **taught, once, per
+building**: `Home` binds the nearest place POI to the spot you're standing on, main saves it
+to `areas.json` under `places`, and from then on that doorway is recognised — the HUD names
+the building and no dungeon is ever guessed there again.
+
+Two details that matter:
+
+- It binds **your position**, not the POI's. mapgenie draws a building's icon wherever it
+  looks right on the world map — a roof, a courtyard — which can be tens of units from the
+  door you actually walk through. The **door** is where the flag flips, so the door is what
+  has to be recognised. The POI-to-door offset is stored alongside (`dist`), and it is
+  small in practice: measured **2u** standing in Kough's Inn.
+- `Home` **refuses** past `placeRadius` (40u). A "nearest" inn 300u away is not the room
+  you're in, and binding it would be the 219u dungeon bug wearing a friendlier name.
+
 ### Height is NOT usable to detect "inside" (measured in-game — this killed the first design)
 
 The obvious detector — a z-band per dungeon — does not work, and it's worth writing
@@ -560,10 +690,45 @@ It is tempting to read this as "the dungeon", and it very nearly is — but it i
 `zoneIndex` cannot name a dungeon until a **mapping table is built**, dungeon by dungeon.
 
 Until then: the flag says *when* to jump into an inset, and the **nearest known entrance**
-(from mapgenie's portal graph) says *which* one. That's a far more forgiving job than
-detection was — the nearest entrance only has to be nearer than the next-nearest, so the
-affine's error would have to be enormous to pick the wrong cave — but it still depends on
-the affine, and it still can't reach the two orphan dungeons.
+(from mapgenie's portal graph) says *which* one — **provided it is actually near** (see
+the next section, which is where this bit an entire dungeon).
+
+### The flag means "inside", not "inside a DUNGEON" — cap the entry distance
+
+The nearest-entrance rule looked forgiving: the right entrance only has to be nearer than
+the next-nearest, so the affine's fit error would have to be enormous to pick the wrong
+cave. **That reasoning has a hole, and it is not about the affine at all.** It assumes the
+right answer is *in the list*. It often isn't:
+
+`insideFlag` is set by **every interior in the game** — houses, shops, the Vernworth
+barracks — and mapgenie has an entrance POI for **none of them**. Walk into a house and
+the app is asked "which dungeon is this?", a question with no true answer; unbounded, it
+returns whichever dungeon is least far away, at any distance whatsoever. Observed:
+
+```
+[areas] auto-calibrated "Ancestral Chamber"  from the crossing (219.4u from the nearest known doorway)
+[areas] Ancestral Chamber sits at height 125.4 (measured 125.4)
+```
+
+That is not a near miss. It **wrote a transform anchored on 219u of error into
+`areas.json`**, and a floor height of 125.4 (the player was up a tower somewhere), so a
+dungeon the player had never entered was permanently mis-placed — and the floor height,
+which *averages* across visits, would have stayed poisoned even after a real visit.
+
+The fix is a radius (`dungeonEnterRadius`, default **20u**, in `config/overlay.json`): a
+crossing anchor is only worth anything if you are standing *in* the doorway, so beyond it
+we decline to answer. The marker then stays on the **overworld** — which is right, because
+DD2 reports ordinary world coordinates indoors, so a building draws you at the building —
+and the overlay's area readout offers the nearest dungeon with `Insert` to accept it. That
+override deliberately **skips the radius**: at that point the guess isn't ours, it's one
+you looked at and confirmed, and it is also the only way into the two orphan dungeons.
+
+Rule of thumb for anything downstream: **a hint the player can't see is a guess the player
+can't correct.** The 219u line was in the console the whole time and no one was reading it
+mid-fight; that's why the same information now sits on the overlay.
+
+The saved area now records the anchor's `dist`, so a placement that looks off can be
+diagnosed instead of re-guessed.
 
 Note the id must be keyed on `(insideFlag, zoneIndex)`, **not zoneIndex alone**: the flag
 appears to select an id *namespace*. Measured so far —

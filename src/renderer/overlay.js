@@ -277,6 +277,7 @@ window.dd2overlay.onCommand('overlay:setting', ({ key, value }) => {
   cfg[key] = value;
   if (key === 'hideFound') applyHideFound();
   if (key === 'rotateWithHeading') applyRotate();
+  if (key === 'areaHud' && !value) { hud.hidden = true; hudSig = null; }  // don't wait for a tick
   if (key === 'autoZoom') {
     // Turning it off mid-run must not strand the map zoomed out — drop the run
     // state and glide straight back to the base zoom.
@@ -305,9 +306,94 @@ window.dd2overlay.onCommand('overlay:interactive', (interactive) => {
   runInWebview(`window.__dd2_interactive_lock__ = ${on}; window.__dd2_follow_suspended__ = ${on};`);
 });
 
+// --- Area readout ------------------------------------------------------------
+// Two things the app cannot know by itself: which BUILDING you just walked into (the
+// game's "inside" flag fires for houses and shops too, and mapgenie has an entrance for
+// none of them), and which FLOOR you're on (every floor reports the same x/y — only
+// your height separates them, and only once you've named a floor at that height).
+//
+// It used to guess both silently: the nearest entrance won at any distance, so a house
+// in Vernworth could calibrate a dungeon 219u away — and get it permanently wrong. Now
+// it declines to guess, and says so here, with the key that settles it. Nothing on this
+// panel is decorative: every line is either where you are or a question you can answer.
+const hud = document.getElementById('areaHud');
+const hudWhere = document.getElementById('hudWhere');
+const hudNear = document.getElementById('hudNear');
+const hudTitle = document.getElementById('hudTitle');
+const hudDetail = document.getElementById('hudDetail');
+const hudAction = document.getElementById('hudAction');
+
+let hudSig = null;   // last rendered content; the feed is 30Hz and the DOM needn't be
+
+// "Home — remember this as Kough's Inn (Inn)" -> the key in a <b>, the rest as text. One
+// line per action; a hint can offer two (it's a building, vs it really is that dungeon).
+// Built as nodes, not innerHTML: the strings carry place names straight from mapgenie.
+function renderActions(actions) {
+  hudAction.textContent = '';
+  (actions || []).forEach((text) => {
+    const line = document.createElement('div');
+    const dash = text.indexOf('—');
+    const key = document.createElement('b');
+    key.textContent = (dash < 0 ? text : text.slice(0, dash)).trim();
+    line.appendChild(key);
+    if (dash >= 0) line.appendChild(document.createTextNode(text.slice(dash + 1).trim()));
+    hudAction.appendChild(line);
+  });
+}
+
+function updateHud(data) {
+  const hint = data.hint || null;
+  const near = data.near || null;
+  const nearby = near && near.dist <= cfg.areaHudRadius;
+
+  // Nothing to say: no question pending, not in a dungeon or a named building, and no
+  // dungeon near enough to be worth naming. Then the overlay should be a map, and only that.
+  const show = cfg.areaHud !== false && (hint || data.areaKey || data.placeName || nearby);
+  if (!show) {
+    if (hudSig !== null) { hud.hidden = true; hudSig = null; }
+    return;
+  }
+
+  // A building you've named is not an area — the marker doesn't move for it (indoors the
+  // game still reports true world coords, so you're already drawn in the right house).
+  // It just stops the app guessing, and tells you where you are.
+  let where;
+  if (data.areaKey) {
+    where = `${data.areaName}${data.areaFloor ? ` · ${data.areaFloor}` : ''}`;
+  } else if (data.placeName) {
+    where = `${data.placeName}${data.placeCategory ? ` · ${data.placeCategory}` : ''}`;
+  } else {
+    where = data.inside ? 'Inside — placed on the overworld' : 'Overworld';
+  }
+  // Suppressed once you're in the dungeon it belongs to — it would just be naming the
+  // door you came through, at whatever distance you've since walked from it.
+  const nearText = (nearby && !data.areaKey)
+    ? `${near.name}${near.floor ? ` ${near.floor}` : ''} · ${near.dist.toFixed(0)}u`
+    : '';
+
+  const actions = (hint && hint.actions) || [];
+  const sig = `${where}|${nearText}|${hint ? `${hint.title}|${hint.detail}|${actions.join('|')}` : ''}`;
+  if (sig === hudSig) return;
+  hudSig = sig;
+
+  hudWhere.textContent = where;
+  hudNear.textContent = nearText;
+  hudNear.classList.toggle('empty', !nearText);
+  hudTitle.textContent = hint ? hint.title : '';
+  hudTitle.classList.toggle('empty', !hint);
+  hudDetail.textContent = hint ? hint.detail : '';
+  hudDetail.classList.toggle('empty', !hint);
+  renderActions(actions);
+  hudAction.classList.toggle('empty', !actions.length);
+  hud.classList.toggle('asking', !!hint);
+  hud.hidden = false;
+}
+
 // --- Position feed -----------------------------------------------------------
 window.dd2overlay.onGamePosition((data) => {
-  if (!cfg || !calibration) return;
+  if (!cfg) return;
+  updateHud(data);
+  if (!calibration) return;
 
   // The transform depends on which area main says we're in: the overworld affine
   // out in the world, that dungeon's inset transform underground. null means the
@@ -331,6 +417,7 @@ window.dd2overlay.onGamePosition((data) => {
     runInWebview(window.DD2MapAgent.buildInstallMarker({
       zoomEase: cfg.zoomEase,
       rotateEase: cfg.rotateEase,
+      headingEase: cfg.headingEase,
       hideChrome: true,
     }));
     markerInstalled = true;
@@ -354,7 +441,11 @@ window.dd2overlay.onGamePosition((data) => {
     || Math.hypot(data.x - prevGamePos.x, data.y - prevGamePos.y) > 0.15 ? 1 : 0;
   prevGamePos = { x: data.x, y: data.y };
 
-  runInWebview(`window.__dd2_apply && window.__dd2_apply(${lngLat.lng}, ${lngLat.lat}, 1, ${moved})`);
+  // Where you're LOOKING, through the same transform as where you ARE. null when the
+  // camera chain missed a tick — the guest then falls back to the movement heading.
+  const ahead = window.DD2Calib.aheadPoint(transform, data.x, data.y, data.facing);
+  const aheadArgs = ahead ? `, ${ahead.lng}, ${ahead.lat}` : '';
+  runInWebview(`window.__dd2_apply && window.__dd2_apply(${lngLat.lng}, ${lngLat.lat}, 1, ${moved}${aheadArgs})`);
   pushZoomTarget();
 });
 

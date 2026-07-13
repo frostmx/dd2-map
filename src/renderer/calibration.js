@@ -72,5 +72,25 @@
     return { a: lin.a, b: lin.b, c: area.c, d: lin.d, e: lin.e, f: area.f };
   }
 
-  window.DD2Calib = { apply, invert, forArea, isValidLngLat };
+  // The player's position pushed a little way along `facing` (a unit vector in GAME
+  // coords, from main's camera read), mapped through the SAME transform as the player.
+  //
+  // The guest turns these two points into an angle. It has to be done as a POINT and not
+  // as an angle: the affine's b/d cross-terms carry the rotation between the game's axes
+  // and the map's north-up ones, and a dungeon inset applies its own transform on top —
+  // so a facing angle converted by hand would be wrong in the overworld and wrong in a
+  // different way underground. Send a point through the real transform and the rotation
+  // comes along for free.
+  //
+  // AHEAD_UNITS just has to be big enough to project to more than a pixel at any zoom;
+  // the transform is linear, so the distance cannot change the resulting angle.
+  const AHEAD_UNITS = 25;
+
+  function aheadPoint(cal, gameX, gameY, facing) {
+    if (!cal || !facing) return null;
+    const p = apply(cal, gameX + facing.x * AHEAD_UNITS, gameY + facing.y * AHEAD_UNITS);
+    return isValidLngLat(p) ? p : null;
+  }
+
+  window.DD2Calib = { apply, invert, forArea, isValidLngLat, aheadPoint };
 })();

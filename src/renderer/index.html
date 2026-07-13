@@ -15,15 +15,21 @@
     #calibrationPanel.active { outline: 2px solid #ff3b30; }
     #calibrationPanel button { margin-right: 6px; margin-top: 6px; }
     #calibrationStatus { margin-top: 6px; opacity: 0.9; }
+    /* pre-WRAP, not pre: the readout's own newlines are deliberate, but the hint lines
+       are sentences ("nearest entrance: … 223u away (too far to be the door you just
+       used …)") and under plain `pre` they simply never wrap — they shot straight out of
+       the panel and across the map, since max-width can't clip an unbreakable line.
+       overflow-wrap:anywhere so a long unspaced place name can't do the same. */
     #coords {
       margin-top: 8px; font-family: monospace; font-size: 12px;
-      color: #7fd1ff; white-space: pre;
+      color: #7fd1ff; white-space: pre-wrap; overflow-wrap: anywhere;
     }
     /* Which area the tracker thinks you're in. Worth its own line and its own
        colour: it decides which transform draws the marker, so when the marker is
        wrong this is the first thing to look at. */
     #area {
       margin-top: 4px; font-family: monospace; font-size: 12px; color: #ffd479;
+      overflow-wrap: anywhere;
     }
   </style>
 </head>
@@ -42,7 +48,9 @@
       <br />
       <label><input type="checkbox" id="hideFound" /> Hide found POIs in overlay</label>
       <br />
-      <label><input type="checkbox" id="rotateWithHeading" /> Rotate overlay to heading (run direction = up)</label>
+      <label><input type="checkbox" id="rotateWithHeading" /> Rotate overlay to heading (look direction = up)</label>
+      <br />
+      <label><input type="checkbox" id="areaHud" /> Show area readout on overlay (nearest dungeon, floor prompts)</label>
     </div>
     <div style="margin-top:8px;">
       <div><strong>Overlay — full map (F9 on)</strong></div>

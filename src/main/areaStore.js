@@ -33,8 +33,17 @@ const FILE = 'areas';
 // single floor. No constant threshold survives both. But once you've stood on a floor and
 // said so, that floor's height is known for that dungeon, and after that your height just
 // picks the nearest one.
+// `places` — poiId -> a BUILDING you've named with Home: { title, category, gameX, gameY }.
+//
+// Not an area and not a transform: a building has no mapgenie inset, so there is nothing
+// to place the marker on and nothing to calibrate. DD2 reports true world coordinates
+// indoors, so inside a house you are ALREADY drawn in the right building — the only thing
+// missing is the name, and the only thing that can supply it is you, once, at the door.
+//
+// Keyed by mapgenie's POI id (stable) and matched on the game position you stood at when
+// you pressed Home (the DOOR — mapgenie's icon may sit on a roof or a courtyard).
 function empty() {
-  return { insetLinear: null, areas: {}, floorHeights: {} };
+  return { insetLinear: null, areas: {}, floorHeights: {}, places: {} };
 }
 
 function load() {
@@ -44,6 +53,7 @@ function load() {
     insetLinear: saved.insetLinear || null,
     areas: saved.areas || {},
     floorHeights: saved.floorHeights || {},
+    places: saved.places || {},
   };
 }
 

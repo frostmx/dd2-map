@@ -17,6 +17,11 @@ const DEFAULTS = {
     areaToggle: 'Insert',
     floorUp: 'PageUp',
     floorDown: 'PageDown',
+    // "This interior is that building." Binds the nearest named place — mapgenie's
+    // Locations/Facilities POIs, e.g. "Kough's Inn" — to the doorway you're standing in.
+    // The game's inside-flag fires for every house and shop, and none of them is a
+    // dungeon, so this is the answer far more often than Insert is.
+    rememberPlace: 'Home',
   },
 
   // The overlay always comes up ICONS-ONLY: that's the mode you actually play with,
@@ -40,20 +45,27 @@ const DEFAULTS = {
   runZoomOut: 1.4,
   zoomEase: 0.12,      // per-frame lerp toward the zoom target; higher = snappier
 
-  // Heading-up: rotate the overlay's map so the way you're RUNNING is up, instead
+  // Heading-up: rotate the overlay's map so the way you're LOOKING is up, instead
   // of leaving you to work out which way to turn so the arrow ends up on the POI.
   // Off by default — north-up is what a map normally means, and heading-up is a
-  // taste. There's no facing angle in DD2's memory, so the heading comes from the
-  // movement vector: it holds its last direction while you stand still, and it
-  // will happily turn the map around if you run backwards.
-  // The control window is never rotated (clicking calibration landmarks on a
+  // taste. The control window is never rotated (clicking calibration landmarks on a
   // spinning map is miserable).
+  //
+  // The heading is the game's CAMERA direction (found 2026-07-13; see FINDINGS.md), so
+  // it is a real facing angle: it holds steady while you stand still and look around,
+  // and running backwards no longer spins the map around. If the camera can't be read
+  // it silently falls back to the old movement-vector heading.
   rotateWithHeading: false,
   // Per-frame lerp toward the heading; higher = snappier. The heading itself is
   // already smoothed, so this stacks on top: 0.1 settles a turn in roughly half a
   // second. Push it up if the map feels like it's lagging behind you, down if a
   // wall-slide or a dodge makes it wobble.
   rotateEase: 0.1,
+  // Smoothing on the heading itself, before rotateEase gets it. The camera signal is
+  // clean (it IS the facing angle, not a direction reconstructed from noisy deltas), so
+  // this only takes the edge off a fast mouse flick. Lower it if a quick look-around
+  // makes the arrow feel twitchy.
+  headingEase: 0.35,
 
   // Speed hysteresis, in game units/sec, with a dwell on each edge.
   // The dwell timer survives the dead band between the two speeds and only resets
@@ -85,6 +97,42 @@ const DEFAULTS = {
   // cluttered the map. The control window keeps showing them, so you can still
   // find and mark them there.
   hideFound: true,
+
+  // --- Dungeons ---------------------------------------------------------------
+  // How close to a KNOWN doorway you have to be, in game units, for the game's "you're
+  // inside" flag to be taken as "you're inside THAT dungeon".
+  //
+  // The flag is set by every building in the game — houses, shops, the barracks — and
+  // mapgenie has an entrance for none of them. Without a limit, the nearest entrance is
+  // whatever dungeon happens to be least far away, which produced this beauty:
+  //
+  //   auto-calibrated "Ancestral Chamber" from the crossing (219.4u from the nearest
+  //   known doorway)
+  //
+  // — and saved that 219u of error as the dungeon's transform. 20u is about a doorway's
+  // worth of slack plus the world affine's fit error. Raise it if a real dungeon you
+  // walk into is being missed (the overlay will tell you how far off it was); lower it
+  // if a building still grabs one.
+  dungeonEnterRadius: 20,
+
+  // Roughly how big a building is, in game units. Two uses, one meaning:
+  //   - how far from the doorway you taught us (Home) we still recognise the building;
+  //   - how far Home will reach for a POI to name it with. Beyond this it refuses —
+  //     a "nearest" inn 300u away is not the room you are standing in, and binding it
+  //     would be the same mistake as the 219u dungeon, wearing a friendlier name.
+  // mapgenie draws a building's icon wherever it looks right (a roof, a courtyard), so
+  // this has to absorb that offset as well as the world affine's fit error.
+  placeRadius: 40,
+
+  // The overlay's area readout: where you are, the nearest dungeon, and what to press
+  // when the app is unsure (it can't know which building you just walked into, and it
+  // can't know your floor until you've named it once). Off = the overlay stays purely
+  // map, and the same information is still in the control window.
+  areaHud: true,
+  // How near a dungeon has to be for the readout to bother mentioning it, in game units.
+  // Well outside dungeonEnterRadius on purpose: it's what tells you the entrance is
+  // there and how far the app thinks you are from it.
+  areaHudRadius: 150,
 
   hideWhenGameUnfocused: true,
   hideMainWindowWithOverlay: true,

@@ -8,7 +8,8 @@
 // Mapbox instance. See FINDINGS.md.
 //
 // Guest API this installs:
-//   __dd2_apply(lng, lat, follow, moved)   position + follow; called every tick
+//   __dd2_apply(lng, lat, follow, moved, aheadLng, aheadLat)
+//                                          position + follow + facing; every tick
 //   __dd2_probe()                          -> JSON: canvas alpha, zoom range, layers
 //   __dd2_set_zoom_target(z | null)        drive zoom from the follow loop (overlay)
 //   __dd2_set_basemap_visible(bool)        icons-only mode (overlay)
@@ -22,6 +23,7 @@
     const o = opts || {};
     const zoomEase = typeof o.zoomEase === 'number' ? o.zoomEase : 0.12;
     const rotateEase = typeof o.rotateEase === 'number' ? o.rotateEase : 0.1;
+    const headingEase = typeof o.headingEase === 'number' ? o.headingEase : 0.35;
     const hideChrome = !!o.hideChrome;
 
     return `
@@ -30,12 +32,14 @@
 
     var ZOOM_EASE = ${zoomEase};
     var ROT_EASE = ${rotateEase};
+    var HEAD_EASE = ${headingEase};
     var HIDE_CHROME = ${hideChrome};
 
     // Dot + arrow. The dot IS the position (it sits on the anchor point); the
-    // arrow overlaps it and points where you're heading. There's no facing angle
-    // in the memory read, so heading is derived from the movement vector — see
-    // updateHeading below.
+    // arrow overlaps it and points where you're FACING — read from the game's camera
+    // (see setHeadingFromAhead). When the camera can't be read, it falls back to the
+    // movement vector (updateHeading), which is all there was before the camera was
+    // found and which reports nothing at all while you stand still.
     function ensureMarker() {
       var m = document.getElementById('__dd2_player_marker__');
       if (!m) {
@@ -58,8 +62,35 @@
     }
 
     // Shortest way round: -180..180, so crossing due-west never spins the long way.
+    //
+    // The +540 trick this used to be — ((target - cur + 540) % 360) - 180 — is only
+    // correct while the dividend stays positive. JS's % takes the sign of the DIVIDEND, so
+    // once (target - cur) fell below -540 it returned a negative remainder and the whole
+    // expression left the -180..180 range: the caller then eased the BEARING the long way
+    // round, by a huge step. That is the endless left spin. It needed an unbounded input to
+    // trigger, which is exactly what __dd2_heading__ became once the camera started
+    // feeding it (see wrap180 below).
     function angleDiff(target, cur) {
-      return ((target - cur + 540) % 360) - 180;
+      var d = (target - cur) % 360;   // (-360, 360), sign of the dividend
+      if (d > 180) d -= 360;
+      if (d < -180) d += 360;
+      return d;
+    }
+
+    // Keep an angle in -180..180. The heading is an ACCUMULATOR — every frame it steps
+    // toward the target — so without this it just keeps counting: turn the camera left for
+    // a few seconds and it runs off to -400, -700, and on down. Nothing downstream cares
+    // about the winding number (the bearing goes through angleDiff, the SVG rotate() is
+    // modular anyway), so wrapping it costs nothing and stops any consumer from ever
+    // seeing an angle it can't handle.
+    //
+    // The old movement-derived heading hid this: it refused to update until you had moved
+    // 3+ pixels, so it never wound up. A camera heading tracks every mouse flick.
+    function wrap180(a) {
+      var x = a % 360;
+      if (x > 180) x -= 360;
+      if (x < -180) x += 360;
+      return x;
     }
 
     // Heading from the movement vector, in WORLD space (degrees CW from east, i.e.
@@ -97,8 +128,64 @@
 
       var target = Math.atan2(dy, dx) * 180 / Math.PI + window.map.getBearing();
       var cur = (typeof window.__dd2_heading__ === 'number') ? window.__dd2_heading__ : target;
-      window.__dd2_heading__ = cur + angleDiff(target, cur) * 0.25;
+      window.__dd2_heading__ = wrap180(cur + angleDiff(target, cur) * 0.25);
       window.__dd2_prev_ll__ = { lng: d.lng, lat: d.lat };
+    }
+
+    // Web Mercator, in RADIANS on both axes — x = lng, y = ln(tan(45 + lat/2)). Both, and
+    // in the same unit, is the whole point: this frame is what makes an angle measured in
+    // lng/lat mean the same thing as an angle measured on screen (isotropic, north-up,
+    // and here flipped y-down to match the screen).
+    //
+    // Mixing the units silently wrecks the angle. A first cut compared a mercY() delta
+    // (radians) against a raw lng delta (degrees), making y ~57x too small: the heading
+    // then crawled while you faced east/west and snapped through +/-90 in an instant —
+    // and that snap, fed to the bearing, is what set the map spinning.
+    function mercX(lng) {
+      return lng * Math.PI / 180;
+    }
+    function mercY(lat) {
+      var r = lat * Math.PI / 180;
+      return Math.log(Math.tan(Math.PI / 4 + r / 2));
+    }
+
+    // Heading from the game's CAMERA — a true facing angle, held while you stand still.
+    //
+    // The caller hands us a LOOK-AHEAD point: the player's position pushed a little way
+    // along the camera's view direction, run through the SAME game->map transform as the
+    // player himself. That indirection is the point. Facing is a vector in GAME space, and
+    // the calibration affine carries a ROTATION between the game's axes and the map's
+    // north-up ones (the b/d cross-terms) — plus a dungeon inset has a transform of its
+    // own. Converting the angle by hand would have to re-derive all of that and would go
+    // subtly wrong underground. Two points that both went through the real transform
+    // can't: whatever the transform does to the world, it does to both.
+    //
+    // DELIBERATELY DOES NOT USE map.project() / getBearing(). It did, and it produced an
+    // ENDLESS SPIN on a fast camera swing: project() reports SCREEN pixels, i.e. it
+    // measures in the very frame that the bearing rotates, and the bearing is driven from
+    // this heading. Cancelling it back out with + getBearing() is exact only if the two are
+    // read in lockstep; any lag between them closes a positive feedback loop, the map winds
+    // itself up, and it only stops if you swing back the other way and unwind it by hand.
+    // updateHeading (movement) hides the same coupling by accident — it refuses to update
+    // until you've MOVED 3+ pixels, so a standing player freezes it and the loop never
+    // closes. The camera heading updates every frame, so it can't rely on that.
+    //
+    // Computing the angle from lng/lat in the fixed north-up Mercator frame makes the
+    // heading a pure function of (facing, calibration). The map's own rotation is not an
+    // input, so no amount of lag can feed back. Output convention matches updateHeading:
+    // degrees CW from east, camera-independent.
+    function setHeadingFromAhead(d, ahead) {
+      var dx = mercX(ahead.lng) - mercX(d.lng);
+      var dy = -(mercY(ahead.lat) - mercY(d.lat)); // screen y grows DOWN; Mercator y grows north
+      if (dx === 0 && dy === 0) return false;      // degenerate — keep the heading we have
+
+      var target = Math.atan2(dy, dx) * 180 / Math.PI;
+      var cur = (typeof window.__dd2_heading__ === 'number') ? window.__dd2_heading__ : target;
+      // Lighter smoothing than the movement heading needs: this signal is already clean
+      // (it's the camera, not a noisy per-tick delta), so it only has to take the edge off
+      // a fast mouse flick, not reconstruct a direction from jitter.
+      window.__dd2_heading__ = wrap180(cur + angleDiff(target, cur) * HEAD_EASE);
+      return true;
     }
 
     // --- Probe -------------------------------------------------------------
@@ -298,11 +385,16 @@
     // Overlay only: hide mapgenie's own embed chrome so the overlay is genuinely
     // just map + marker. Deliberately conservative — .mapboxgl-popup and the POI
     // symbols must survive, since clicking a POI while holding Alt is the point.
+    //
+    // #mini-header is the embed's nav strip ("Full Map", "Track Progress"). It is NOT a
+    // <header>/<nav> — it's a plain div with an id — so the tag selectors below never
+    // touched it, and those two buttons sat over the game. They belong to the control
+    // window, where the chrome is left alone and you can actually click them.
     function hideChrome() {
       if (document.getElementById('__dd2_chrome_css__')) return;
       var el = document.createElement('style');
       el.id = '__dd2_chrome_css__';
-      el.textContent = '.mapboxgl-control-container,header,nav,footer,aside{display:none !important;}';
+      el.textContent = '.mapboxgl-control-container,header,nav,footer,aside,#mini-header{display:none !important;}';
       document.head.appendChild(el);
     }
 
@@ -423,7 +515,18 @@
         el.style.left = p.x + 'px';
         el.style.top = p.y + 'px';
 
-        updateHeading(d);
+        // Facing (from the camera) wins; the movement vector is the fallback for when
+        // the camera chain missed a tick. Note the two must not BOTH run: the movement
+        // heading would drag the camera heading back toward the direction of travel,
+        // and strafing/backpedalling are exactly when they disagree.
+        //
+        // Measured against t, the TRUE position, not d, the smoothed display one: ahead
+        // was built from the true position on the same tick, so pairing it with the
+        // lagging d would bend the facing by however far the follow easing is currently
+        // behind — a bend that grows with speed, exactly when you would blame the camera
+        // for it. The marker still DRAWS at d; only the angle comes from t.
+        var ahead = window.__dd2_ahead__;
+        if (!(ahead && setHeadingFromAhead(t, ahead))) updateHeading(d);
         var g = document.getElementById('__dd2_marker_rot__');
         if (g && typeof window.__dd2_heading__ === 'number') {
           // The heading is in world space, the SVG lives on screen: subtracting the
@@ -471,11 +574,19 @@
 
     // Called each poll tick: just hands the loop a fresh target/flags. All actual
     // marker/camera motion happens in followFrame at 60fps.
-    window.__dd2_apply = function(lng, lat, follow, moved) {
+    //
+    // aheadLng/aheadLat are the look-ahead point (the player pushed along the camera's
+    // view direction, through the same transform) — omitted when the camera couldn't be
+    // read, in which case the loop falls back to the movement-derived heading. Passing
+    // null CLEARS it rather than leaving a stale facing pinned to the arrow.
+    window.__dd2_apply = function(lng, lat, follow, moved, aheadLng, aheadLat) {
       if (!window.map || typeof window.map.project !== 'function') return false;
       installMapHooks();
       ensureMarker();
       window.__dd2_follow_target__ = { lng: lng, lat: lat };
+      window.__dd2_ahead__ = (typeof aheadLng === 'number' && typeof aheadLat === 'number')
+        ? { lng: aheadLng, lat: aheadLat }
+        : null;
       window.__dd2_following__ = !!follow;
       // Moving normally cancels a manual pan and resumes follow — but NOT while
       // the overlay is holding the mouse (Alt). Otherwise any drift over the
@@ -688,6 +799,54 @@
       return null;
     }
 
+    // --- Named places (for buildings) ---------------------------------------
+    //
+    // The game's "inside" flag fires for every house, shop and inn, and NONE of them is
+    // a dungeon with an inset — so there is nothing to place the player on and nothing
+    // for the portal graph to match. What mapgenie does have is the building itself, as
+    // an ordinary POI on the world map ("Kough's Inn", category Inn). That's enough to
+    // NAME where you are, which is the whole of what's missing.
+    //
+    // Which POIs count as a place? mapgenie groups its categories, and two of the groups
+    // are exactly the question: "Locations" (Settlement, Waypoint, Campsite, Dungeon,
+    // Area, Portcrystal) and "Facilities" (Inn, Tavern, Armory, Apothecary, ...). Matched
+    // on the group TITLE, not its id — the ids are this map's (1770/1777) and would
+    // silently select the wrong groups on any other game.
+    //
+    // "Transition" is dropped: those ARE the doorways, they're already the portal graph,
+    // and their titles name the destination floor ("Waterfall Cave 1F") rather than a
+    // place you could be standing in.
+    //
+    // Overworld only. Their game coords come from inverting the WORLD affine, which is
+    // meaningless for a POI drawn inside a dungeon inset.
+    var PLACE_GROUPS = { 'Locations': 1, 'Facilities': 1 };
+    var groups = state.map.groups || [];
+    var cats = state.map.categories || [];
+    if (!Array.isArray(groups)) groups = Object.keys(groups).map(function(k) { return groups[k]; });
+    if (!Array.isArray(cats)) cats = Object.keys(cats).map(function(k) { return cats[k]; });
+
+    var groupTitle = {};
+    groups.forEach(function(g) { groupTitle[g.id] = g.title; });
+    var placeCat = {};
+    cats.forEach(function(c) {
+      if (PLACE_GROUPS[groupTitle[c.group_id]] && c.title !== 'Transition') placeCat[c.id] = c.title;
+    });
+
+    var pois = [];
+    Object.keys(byId).forEach(function(id) {
+      var loc = byId[id];
+      var cat = loc && placeCat[loc.category_id];
+      if (!cat || !loc.title) return;
+      if (!overworld[loc.region_id]) return;
+      pois.push({
+        id: loc.id,
+        title: loc.title,
+        category: cat,
+        lng: loc.longitude,
+        lat: loc.latitude,
+      });
+    });
+
     // Portal edges, from the descriptions. A location can name more than one
     // destination, so collect them all.
     var portals = [];
@@ -722,6 +881,7 @@
       regions: regions,
       subregions: subregions,
       portals: portals,
+      pois: pois,                        // named places: buildings, inns, settlements
       locationCount: Object.keys(byId).length,
     });
   })();

@@ -111,10 +111,16 @@ static memory (`DD2.exe+FA62C94`, no pointer chain):
 
 - **Whether you're inside** — the game's flag at `+FA62CAC`. 0 = overworld, 1 and 2 both
   = inside. Authoritative; never height (it's continuous through a cave mouth, and
-  "inside" isn't even reliably lower — towers).
-- **Which dungeon** — the nearest known entrance from mapgenie's portal graph. The game's
-  own dungeon id sits right there at `+FA62CB0`, but it's the *game's* numbering, not
-  mapgenie's, and the mapping doesn't exist yet. `tools/zoneLog.js` is collecting it.
+  "inside" isn't even reliably lower — towers). Note it means "inside", **not "inside a
+  dungeon"**: every house and shop sets it too.
+- **Which dungeon** — the nearest known entrance from mapgenie's portal graph, **but only
+  within `dungeonEnterRadius` (20u)**. Beyond that we don't answer: buildings set the flag
+  and have no entrance POI at all, so an unbounded "nearest" once calibrated a dungeon
+  from **219u away** and saved that error forever. Too far → stay on the overworld (your
+  world coords are still right indoors) and let the overlay offer it; `Insert` accepts and
+  skips the radius, because then the guess is yours. The game's own dungeon id sits right
+  there at `+FA62CB0`, but it's the *game's* numbering, not mapgenie's, and the mapping
+  doesn't exist yet. `tools/zoneLog.js` is collecting it.
 - **Which floor** — **height**, learned per dungeon into `areas.floorHeights`. This is the
   only signal that can carry it: the game reports the *same (x, y)* on every floor, so
   floors differ in z and nothing else. `PageUp`/`PageDown` names a floor, the app measures
@@ -124,9 +130,27 @@ static memory (`DD2.exe+FA62C94`, no pointer chain):
   so no fixed threshold works. **The room id at `+FA62C94` is NOT a floor** — same hash at
   h=-13.7 and h=-5.2 — and a learned room→floor table was tried and failed; don't retry it.
 
+**Most interiors are not dungeons at all** — they're houses, shops, inns, and mapgenie
+draws no inset for any of them. Nothing needs placing (indoors the game still reports true
+world coords, so you're already drawn in the right building); only the *name* is missing.
+`Home` (`tracker.rememberPlace()`) binds the nearest **place POI** — mapgenie's
+`Locations`/`Facilities` groups, matched on group *title*, `Transition` excluded — to the
+doorway you're standing in, and main saves it to `areas.json` under `places`. That doorway
+is then recognised forever: the HUD names the building, and no dungeon is guessed there
+again. It binds *your* position, not the POI's (mapgenie's icon can sit on a roof), and
+refuses past `placeRadius` (40u).
+
 `Insert` covers the two dungeons mapgenie has no entrance for. Floor labels sort by
 `floorRank()`, not alphabetically — B1F is *below* 1F — and an unlabelled `''` floor is
 dropped unless it's the only one (it would otherwise be a phantom floor with no panel).
+
+Where the tracker won't guess, it says so: `tracker.hint()` returns a structured
+"what I'm unsure about, and which keys settle it" (or null), main turns it into English
+(it owns the hotkey names — `describeHint`, whose `actions` are the offers: `Home` = it's
+this building, `Insert` = it really is that dungeon), and it rides the position feed to
+**both** windows. The overlay draws it as `#areaHud`; the control window appends it to the coords
+readout. A guess the player can't see is a guess the player can't correct — that is what
+let a 219u mis-calibration sit in the console unnoticed.
 
 ### Found-mark sync between windows
 
