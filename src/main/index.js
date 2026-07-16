@@ -151,6 +151,7 @@ let cfg = null;              // config/overlay.json, with defaults filled in
 let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
 let inputTimer = null;
 let altDown = false;         // last observed Alt state, for edge detection
+let altChorded = false;      // some other key went down during this Alt hold — it's a chord (Alt+Tab etc.), not a tap
 let interactiveOn = false;   // Alt is now a TOGGLE (switch), not hold — this is its state
 // The overlay's F9 mode: 'icons' | 'map' | 'window'. F9 cycles; F8 preserves it. Initial
 // value set from cfg.openIconsOnly once cfg is loaded.
@@ -928,10 +929,18 @@ function startInputPolling() {
     try {
       const alt = win32Input.isAltDown();
 
-      // Alt is a SWITCH, not hold: flip the interactive state on each Alt PRESS (rising
-      // edge). One press captures the mouse (click POIs, move/resize the windowed box);
-      // press again to hand control back to the game.
-      if (alt && !altDown) {
+      // Track whether this Alt hold is a bare tap or a chord (Alt+Tab, Alt+F4, ...).
+      // Rising edge starts a fresh hold; any other key going down during the hold
+      // marks it chorded, so a later Alt+Tab doesn't also toggle the overlay.
+      if (alt && !altDown) altChorded = false;
+      if (alt && win32Input.otherKeyPressedSinceLastCheck()) altChorded = true;
+
+      // Alt is a SWITCH, not hold: flip the interactive state on Alt RELEASE (falling
+      // edge) — not press, so Alt+Tab's Alt-down doesn't fire this before Windows even
+      // sees the Tab — and only when the hold was a bare tap. One tap captures the
+      // mouse (click POIs, move/resize the windowed box); tap again to hand control
+      // back to the game.
+      if (!alt && altDown && !altChorded) {
         interactiveOn = !interactiveOn;
         overlayWindow.setInteractive(interactiveOn);
         overlayWindow.send('overlay:interactive', interactiveOn);
