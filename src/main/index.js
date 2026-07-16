@@ -933,7 +933,7 @@ function startInputPolling() {
       // Rising edge starts a fresh hold; any other key going down during the hold
       // marks it chorded, so a later Alt+Tab doesn't also toggle the overlay.
       if (alt && !altDown) altChorded = false;
-      if (alt && win32Input.otherKeyPressedSinceLastCheck()) altChorded = true;
+      if (alt && win32Input.otherKeyIsDown()) altChorded = true;
 
       // Alt is a SWITCH, not hold: flip the interactive state on Alt RELEASE (falling
       // edge) — not press, so Alt+Tab's Alt-down doesn't fire this before Windows even

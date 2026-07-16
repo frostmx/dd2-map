@@ -24,7 +24,6 @@ const VK_MENU = 0x12;  // Alt (either side)
 const VK_LMENU = 0xA4;
 const VK_RMENU = 0xA5;
 const KEY_DOWN_MASK = 0x8000;
-const PRESSED_SINCE_LAST_CALL_MASK = 0x0001;
 
 // HWND/HANDLE are passed as uintptr_t rather than void*: we deal in raw handle
 // VALUES here (Electron hands us the window handle as an integer in a Buffer),
@@ -46,20 +45,20 @@ function isAltDown() {
   return (GetAsyncKeyState(VK_MENU) & KEY_DOWN_MASK) !== 0;
 }
 
-// True if any key OTHER than Alt itself was pressed since the last call to this
-// function. Used to tell a bare Alt tap (toggle the overlay) apart from Alt used
-// as a chord modifier (Alt+Tab, Alt+F4, Alt+Space, ...): we poll this on every
-// tick while Alt is held, and if it ever comes back true during the hold, the
-// eventual Alt-up is a chord release, not a tap, and must not toggle anything.
+// True if any key OTHER than Alt itself is currently down. Used to tell a bare Alt
+// tap (toggle the overlay) apart from Alt used as a chord modifier (Alt+Tab,
+// Alt+F4, Alt+Space, ...): we poll this on every tick while Alt is held, and if it
+// ever comes back true during the hold, the eventual Alt-up is a chord release,
+// not a tap, and must not toggle anything.
 //
-// The "pressed since last call" bit (not the "down now" bit) is what makes this
-// work at a 50ms poll rate: it latches a keypress that happened and finished
-// entirely between two ticks, which a plain "is it down right now" check would
-// simply miss — and Alt+Tab's Tab is exactly that kind of brief press.
-function otherKeyPressedSinceLastCheck() {
+// Deliberately the "down right now" bit (0x8000), not the "pressed since last
+// call" bit (0x1): that bit is documented as unreliable from Vista onward and in
+// practice never fired here. Checking "down now" at a 50ms poll rate is plenty —
+// a real keypress during an Alt+Tab lasts far longer than one tick.
+function otherKeyIsDown() {
   for (let vk = 0x01; vk <= 0xfe; vk++) {
     if (vk === VK_MENU || vk === VK_LMENU || vk === VK_RMENU) continue;
-    if ((GetAsyncKeyState(vk) & PRESSED_SINCE_LAST_CALL_MASK) !== 0) return true;
+    if ((GetAsyncKeyState(vk) & KEY_DOWN_MASK) !== 0) return true;
   }
   return false;
 }
@@ -113,7 +112,7 @@ function releaseCursorClip() {
 
 module.exports = {
   isAltDown,
-  otherKeyPressedSinceLastCheck,
+  otherKeyIsDown,
   foregroundWindow,
   foregroundProcessId,
   forceForeground,
