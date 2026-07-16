@@ -300,7 +300,8 @@
           el.id = id;
           document.head.appendChild(el);
         }
-        el.textContent = 'html,body,#map,.map,.mapboxgl-map,.mapboxgl-canvas-container{background:transparent !important;}';
+        el.textContent = 'html,body,#map,.map,.mapboxgl-map,.mapboxgl-canvas-container,' +
+          '.maplibregl-map,.maplibregl-canvas-container{background:transparent !important;}';
       } else if (el) {
         el.remove();
       }
@@ -545,7 +546,7 @@
       }
       // Contrast is nudged up as it darkens, or roads/labels turn to mud.
       var contrast = (1 + (1 - v) * 0.35).toFixed(2);
-      el.textContent = '.mapboxgl-canvas{filter:brightness(' + v + ') contrast(' + contrast + ');}';
+      el.textContent = '.mapboxgl-canvas,.maplibregl-canvas{filter:brightness(' + v + ') contrast(' + contrast + ');}';
     };
 
     // Overlay only: hide mapgenie's own embed chrome so the overlay is genuinely
@@ -560,11 +561,18 @@
     // Hide the whole nav strip INCLUDING mapgenie's logo — in the windowed mode the logo
     // would be trapped inside the small box, so the overlay draws its own MAP GENIE badge
     // pinned to the SCREEN's top-right corner instead (see #mgLogo in overlay.html/js).
+    //
+    // mapgenie migrated Mapbox GL -> MapLibre GL (the page shims window.mapboxgl =
+    // window.maplibregl, so window.map and the guest API are unchanged) — but the CSS
+    // class prefix changed to maplibregl-, which is how the zoom +/- buttons and the
+    // World/Unmoored World switcher (mapTypeControl, also a map control) reappeared over
+    // the game. Keep BOTH prefixes: the old one costs nothing and survives a flip back.
     function hideChrome() {
       if (document.getElementById('__dd2_chrome_css__')) return;
       var el = document.createElement('style');
       el.id = '__dd2_chrome_css__';
-      el.textContent = '.mapboxgl-control-container,header,nav,footer,aside,#mini-header,.map-genie-logo{display:none !important;}';
+      el.textContent = '.mapboxgl-control-container,.maplibregl-control-container,' +
+        'header,nav,footer,aside,#mini-header,.map-genie-logo{display:none !important;}';
       document.head.appendChild(el);
     }
 

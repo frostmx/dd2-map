@@ -221,6 +221,10 @@ function updateRunning(data, now) {
 // or the overlay would flash the map on the way up. mapShown() = the map layers are drawn.
 let overlayMode = 'icons';
 const mapShown = () => overlayMode !== 'icons';
+// Map style: draw OUR edge art ('edge') or leave mapgenie's full-colour raster ('color').
+// Chosen in the control window (Settings); defaults to edge. When 'color', we draw no edge
+// art and never hide the raster.
+const edgeStyleOn = () => !cfg || cfg.mapStyle !== 'color';
 
 // The current dungeon floor's edge art, { localArea, corners } or null. Computed from the
 // feed's edgeLocalArea/edgeBox each tick; drives the F9 map when underground.
@@ -271,7 +275,7 @@ function applyEdge() {
   // Overworld (id -1) is drawn by the crisp near-player TILE grid (applyWorldTiles), NOT the
   // single blurry world.png — stacking both ghosts the base through the transparent tiles
   // ("drawn twice"). So the single-image path here is for dungeons/towns only.
-  if (mapShown() && edgeArea && edgeArea.localArea !== -1) {
+  if (mapShown() && edgeStyleOn() && edgeArea && edgeArea.localArea !== -1) {
     const la = edgeArea.localArea;
     const corners = edgeArea.corners;
     edgePngDataUrl(la).then((dataUrl) => {
@@ -321,7 +325,7 @@ fetch('app-tiles://edge/world/manifest.json')
 // Draw/refresh the crisp tiles around the player. Clears them when the map is hidden or we're
 // not in the overworld. `transform` is the world affine (forArea returns it for a null areaKey).
 function applyWorldTiles(data, transform) {
-  const active = worldTiles && mapShown() && edgeArea && edgeArea.localArea === -1;
+  const active = worldTiles && mapShown() && edgeStyleOn() && edgeArea && edgeArea.localArea === -1;
   if (!active) {
     if (worldTileKey !== null) {
       worldTileKey = null;
@@ -418,10 +422,11 @@ function layoutFrame() {
   scheduleGuestResize();
 }
 
-// The MapGenie badge (screen top-right) rides with the map: shown in map/window modes, hidden
-// in icons-only (no map, nothing to attribute).
+// The MapGenie badge (screen top-right) shows in every overlay mode — icons-only still
+// draws mapgenie's POI icons, so there's always something to attribute. (F8 hides the
+// whole overlay window, badge included, so "overlay off" needs no special case here.)
 function applyLogo() {
-  if (mgLogo) mgLogo.hidden = !mapShown();
+  if (mgLogo) mgLogo.hidden = false;
 }
 
 function applyMode(mode) {
@@ -432,7 +437,7 @@ function applyMode(mode) {
   // In a dungeon/town/overworld we draw OUR edge art instead of mapgenie's raster; keep the
   // raster hidden exactly when we'll draw edge art over it. 'window' shows the map too.
   const show = mapShown();
-  const useEdge = show && !!edgeArea;
+  const useEdge = show && edgeStyleOn() && !!edgeArea;
   runInWebview(`window.__dd2_set_basemap_visible && window.__dd2_set_basemap_visible(${show && !useEdge})`);
   applyEdge();
   applyOpacity();
@@ -534,6 +539,9 @@ window.dd2overlay.onCommand('overlay:setting', ({ key, value }) => {
   cfg[key] = value;
   if (key === 'hideFound') applyHideFound();
   if (key === 'rotateWithHeading') applyRotate();
+  // Edge <-> full-colour: re-run the mode so the raster/edge swap immediately. The world
+  // tile grid re-evaluates on the next position tick (applyWorldTiles checks edgeStyleOn).
+  if (key === 'mapStyle') applyMode(overlayMode);
   if (key === 'areaHud' && !value) { hud.hidden = true; hudSig = null; }  // don't wait for a tick
   if (key === 'autoZoom') {
     // Turning it off mid-run must not strand the map zoomed out — drop the run

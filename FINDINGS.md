@@ -58,6 +58,16 @@ gigabytes and all reproducible.
 - Map lib is **Mapbox GL JS** (not Leaflet). `window.map.project({lng,lat})` gives
   live pixel coords accounting for pan/zoom; raster source bounds `[-1.4,0,0,1.4]`
   (axis-aligned, no rotation).
+- **2026-07: mapgenie migrated to MapLibre GL.** The page shims
+  `window.mapboxgl = window.maplibregl`, so `window.map` and every JS API the guest
+  script uses are unchanged — but the **CSS class prefix changed** from `mapboxgl-`
+  to `maplibregl-` (MapLibre v3+ dropped the compat classes). Every CSS rule the
+  guest injects by class (`hideChrome`, transparency, brightness) silently stopped
+  matching; symptom was the zoom +/- buttons and the World/Unmoored World switcher
+  (both live in `.maplibregl-control-container` — the switcher is a map control
+  too, `mapTypeControl` added `bottom-right`) reappearing over the game. Fix: keep
+  BOTH prefixes in every selector. If a class-targeted style silently stops
+  working again, suspect another rename before anything else.
 
 ## Memory findings (the hard-won part)
 
