@@ -12,9 +12,7 @@
       border-radius: 8px; font-size: 13px; max-width: 320px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.5);
     }
-    #calibrationPanel.active { outline: 2px solid #ff3b30; }
     #calibrationPanel button { margin-right: 6px; margin-top: 6px; }
-    #calibrationStatus { margin-top: 6px; opacity: 0.9; }
     /* pre-WRAP, not pre: the readout's own newlines are deliberate, but the hint lines
        are sentences ("nearest entrance: … 223u away (too far to be the door you just
        used …)") and under plain `pre` they simply never wrap — they shot straight out of
@@ -36,12 +34,6 @@
 <body>
   <div id="calibrationPanel">
     <div><strong>DD2 Map</strong></div>
-    <button id="toggleCalibrationBtn">Start Calibration</button>
-    <button id="nextPointBtn" disabled>Next Point</button>
-    <button id="resetCalibrationBtn">Reset</button>
-    <button id="refineBtn" disabled>Refine</button>
-    <button id="debugMarkerBtn">Debug: Marker Info</button>
-    <button id="debugStyleBtn">Debug: Map Style</button>
     <div style="margin-top:6px;"><label><input type="checkbox" id="followChk" checked /> Follow player (pan map)</label></div>
     <div style="margin-top:8px;">
       <label><input type="checkbox" id="autoZoom" /> Auto-zoom overlay (out while running)</label>
@@ -51,6 +43,12 @@
       <label><input type="checkbox" id="rotateWithHeading" /> Rotate overlay to heading (look direction = up)</label>
       <br />
       <label><input type="checkbox" id="areaHud" /> Show area readout on overlay (nearest dungeon, floor prompts)</label>
+    </div>
+    <div style="margin-top:8px;">
+      <div><strong>Overlay map style</strong></div>
+      <label><input type="radio" name="mapStyle" id="mapStyleColor" value="color" /> Full color</label>
+      <label style="margin-left:8px;"><input type="radio" name="mapStyle" id="mapStyleEdge" value="edge" /> Edge</label>
+      <div id="mapStyleNote" style="opacity:0.7;font-size:11px;margin-top:2px;"></div>
     </div>
     <div style="margin-top:8px;">
       <div><strong>Overlay — full map (F9 on)</strong></div>
@@ -71,7 +69,6 @@
     </div>
     <div id="coords">Waiting for DD2…</div>
     <div id="area">Overworld</div>
-    <div id="calibrationStatus">Idle.</div>
   </div>
   <webview
     id="mapView"

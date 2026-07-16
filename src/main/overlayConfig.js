@@ -31,6 +31,12 @@ const DEFAULTS = {
   // overlay converts to pixels; move/resize writes it back here. Default: upper-right.
   windowRect: { left: 0.63, top: 0.06, width: 0.34, height: 0.46 },
 
+  // Overlay map style: 'edge' draws OUR edge art (baked from the game's textures) over the
+  // map; 'color' leaves mapgenie's full-colour raster. Default 'edge' — with art baked it's
+  // what the overlay is for; with none baked it harmlessly falls back to the raster (there's
+  // no edge layer to draw). Chosen from the control window (Full color / Edge).
+  mapStyle: 'edge',
+
   // null = adopt whatever zoom the map is already at on first run, then persist.
   baseZoom: null,
   zoomStep: 0.5,       // how far one zoomIn/zoomOut press moves the base zoom

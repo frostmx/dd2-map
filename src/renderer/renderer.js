@@ -1,35 +1,22 @@
-// Runs in the host window's isolated main world. Calibration clicks are
-// captured by a click listener injected directly into the mapgenie <webview>
-// guest's own main-world JS context (see main/index.js's did-attach-webview
-// handler) via executeJavaScript — this reliably sees the real Mapbox
-// instance, unlike a <webview> preload script, which in this Electron
-// version does not actually share window.map with the page even under
-// contextIsolation=no (see M3 debugging notes). The guest bridges click
-// results back via console.log with a special prefix, parsed in main.
+// Runs in the host window's isolated main world. The control window keeps mapgenie's
+// full-colour map for browsing; it draws the player marker and hosts the overlay's
+// settings (the overlay has no UI of its own). The marker/follow updater and the affine
+// helpers live in mapAgent.js / calibration.js, shared with the overlay so the two windows
+// can't drift apart.
 
 const webview = document.getElementById('mapView');
-const panel = document.getElementById('calibrationPanel');
-const statusEl = document.getElementById('calibrationStatus');
-const nextPointBtn = document.getElementById('nextPointBtn');
-const resetBtn = document.getElementById('resetCalibrationBtn');
-const toggleBtn = document.getElementById('toggleCalibrationBtn');
 const coordsEl = document.getElementById('coords');
 const areaEl = document.getElementById('area');
 const followChk = document.getElementById('followChk');
 let followPlayer = followChk.checked; // reflects the HTML default (checked)
 followChk.addEventListener('change', () => { followPlayer = followChk.checked; });
 
-const CALIBRATION_POINT_COUNT = 3;
-
-// Full 2D affine: { a, b, c, d, e, f } solving
-//   lng = a*gameX + b*gameY + c
-//   lat = d*gameX + e*gameY + f
-// (Legacy saved files use the old separable { a, b, c, d } form: lng = a*gameX+b,
-//  lat = c*gameY+d. applyCalibration still honors those — detected by absence of e/f.)
+// The world affine: { a, b, c, d, e, f } solving
+//   lng = a*gameX + b*gameY + c ,  lat = d*gameX + e*gameY + f
+// Loaded from config/calibration.json — the overworld transform (dungeon insets come from
+// areas.json). No longer authored here (the game pointer + the shipped affine replaced hand
+// calibration), but still applied to place the marker.
 let calibration = null;
-let calibrationMode = false;
-let points = [];
-let awaitingClick = false;
 let lastGamePos = null;
 let prevGamePos = null; // previous tick's game position, for follow's "moved" test
 let webviewReady = false;
@@ -112,7 +99,7 @@ function areaLabel() {
   const name = `${currentArea.name} ${currentArea.floor}`.trim();
   const rec = areas.areas[currentArea.key];
   const lin = areas.insetLinear;
-  if (!lin) return `${name} — no inset scale (is the world map calibrated?)`;
+  if (!lin) return `${name} — no inset scale`;
   if (!rec) return `${name} — not placed yet (walk in through its entrance)`;
   const how = rec.src === 'game' ? 'from game data' : (rec.auto ? 'auto' : 'by hand');
   return `${name} — ${how}, ${lin.scale ? `${lin.scale.toFixed(2)}x scale` : 'scale set'}`;
@@ -135,140 +122,14 @@ function installFoundSync(attempt = 0) {
   });
 }
 
-function setStatus(text) {
-  statusEl.textContent = text;
-}
-
-function armNextClick() {
-  awaitingClick = true;
-  nextPointBtn.disabled = true;
-  setStatus(`Point ${points.length + 1}/${CALIBRATION_POINT_COUNT}: walk to a landmark in-game, then click it on the map.`);
-}
-
-function setCalibrationMode(active) {
-  calibrationMode = active;
-  runInWebview(`window.__dd2_set_calibration_mode__ && window.__dd2_set_calibration_mode__(${active});`);
-  toggleBtn.textContent = active ? 'Exit Calibration' : 'Start Calibration';
-  panel.classList.toggle('active', active);
-  if (active) {
-    points = [];
-    document.getElementById('refineBtn').disabled = true;
-    runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
-    armNextClick();
-  } else {
-    awaitingClick = false;
-    nextPointBtn.disabled = true;
-    setStatus('Idle.');
-  }
-}
-
-// Solve a 3x3 linear system M·x = rhs by Gaussian elimination with partial
-// pivoting (copies its inputs; M is 3 rows of 3).
-function solve3(M, rhs) {
-  const A = M.map((row, i) => [row[0], row[1], row[2], rhs[i]]);
-  for (let col = 0; col < 3; col++) {
-    let piv = col;
-    for (let r = col + 1; r < 3; r++) {
-      if (Math.abs(A[r][col]) > Math.abs(A[piv][col])) piv = r;
-    }
-    [A[col], A[piv]] = [A[piv], A[col]];
-    const div = A[col][col];
-    for (let j = col; j < 4; j++) A[col][j] /= div;
-    for (let r = 0; r < 3; r++) {
-      if (r === col) continue;
-      const factor = A[r][col];
-      for (let j = col; j < 4; j++) A[r][j] -= factor * A[col][j];
-    }
-  }
-  return [A[0][3], A[1][3], A[2][3]];
-}
-
-// The game world and mapgenie's map are the same map at different scales, so
-// the exact relationship is a 2D affine transform (see header comment on
-// `calibration`). Solving lng and lat with the SHARED design matrix [gx, gy, 1]
-// via least squares: 3 non-collinear points give an exact fit; extra
-// well-spread points average out click imprecision. The b/d cross-terms carry
-// the rotation between the game's world axes and the map's north-up axes — the
-// piece the old separable fit was missing, which is why it drifted on long runs.
-function solveAffine(pts) {
-  let Sxx = 0, Sxy = 0, Sx = 0, Syy = 0, Sy = 0;
-  let gLng = 0, yLng = 0, sLng = 0;
-  let gLat = 0, yLat = 0, sLat = 0;
-  const n = pts.length;
-  for (const p of pts) {
-    const gx = p.gameX, gy = p.gameY;
-    Sxx += gx * gx; Sxy += gx * gy; Sx += gx; Syy += gy * gy; Sy += gy;
-    gLng += gx * p.lng; yLng += gy * p.lng; sLng += p.lng;
-    gLat += gx * p.lat; yLat += gy * p.lat; sLat += p.lat;
-  }
-  const M = [[Sxx, Sxy, Sx], [Sxy, Syy, Sy], [Sx, Sy, n]];
-  const [a, b, c] = solve3(M, [gLng, yLng, sLng]);
-  const [d, e, f] = solve3(M, [gLat, yLat, sLat]);
-  return { a, b, c, d, e, f };
-}
-
-// Scale is estimated from the SPREAD of the calibration points, so clustered or
-// thin-triangle points give a poor scale estimate and the marker drifts in
-// proportion to how far you travel from the calibration spot. This flags an
-// under-constrained calibration before it's trusted. All thresholds are ratios,
-// so they hold regardless of the game's coordinate magnitudes.
-function calibrationQuality(pts) {
-  const xs = pts.map((p) => p.gameX);
-  const ys = pts.map((p) => p.gameY);
-  const spanX = Math.max(...xs) - Math.min(...xs);
-  const spanY = Math.max(...ys) - Math.min(...ys);
-  const warnings = [];
-
-  const big = Math.max(spanX, spanY) || 1;
-  if (Math.min(spanX, spanY) / big < 0.3) {
-    const thin = spanX < spanY ? 'X (east-west)' : 'Y (north-south)';
-    warnings.push(`points barely spread along ${thin} — that axis will drift`);
-  }
-  // Near-collinear points (thin sliver) under-constrain the fit even if both
-  // spans look large. Compare the triangle's area to its bounding box.
-  if (pts.length >= 3) {
-    const [a, b, c] = pts;
-    const area = Math.abs(
-      (b.gameX - a.gameX) * (c.gameY - a.gameY) - (c.gameX - a.gameX) * (b.gameY - a.gameY),
-    ) / 2;
-    if (spanX * spanY > 0 && area / (spanX * spanY) < 0.08) {
-      warnings.push('points are nearly in a straight line — pick a fatter triangle');
-    }
-  }
-  return { spanX, spanY, warnings };
-}
-
-// Worst-case prediction error over the stored calibration points, expressed in
-// GAME units (map error run back through the inverse linear part). ~0 means the
-// affine passes through every point; a stubbornly large value across many
-// well-spread points would mean the map itself isn't perfectly to-scale.
-function fitResidualGameUnits(cal) {
-  const pts = cal.points || [];
-  const det = cal.a * cal.e - cal.b * cal.d;
-  if (!pts.length || !Number.isFinite(det) || det === 0) return null;
-  let maxErr = 0;
-  for (const p of pts) {
-    const plng = cal.a * p.gameX + cal.b * p.gameY + cal.c;
-    const plat = cal.d * p.gameX + cal.e * p.gameY + cal.f;
-    const dlng = p.lng - plng;
-    const dlat = p.lat - plat;
-    const egx = (cal.e * dlng - cal.b * dlat) / det;
-    const egy = (-cal.d * dlng + cal.a * dlat) / det;
-    maxErr = Math.max(maxErr, Math.hypot(egx, egy));
-  }
-  return maxErr;
-}
-
-// The affine apply/forArea helpers and the marker/follow guest script live in
-// calibration.js and mapAgent.js, shared with the overlay window so the two can't
-// drift apart. This window passes no zoom target (it owns its zoom via the
-// saved-view glide below) and keeps mapgenie's chrome — it's where you browse and
-// calibrate.
+// The marker/follow guest script lives in mapAgent.js, shared with the overlay. This
+// window passes no zoom target (it owns its zoom via the saved-view glide below) and
+// keeps mapgenie's chrome — it's where you browse.
 const INSTALL_MARKER = window.DD2MapAgent.buildInstallMarker({ hideChrome: false });
 
-// Overlay knobs. The overlay has no UI of its own, so the settings worth changing
-// while you look at them live here. They only ever touch the MAP — the game
-// itself is never modified.
+// --- Overlay settings ---------------------------------------------------------
+// The overlay has no UI of its own, so the settings worth changing while you look at
+// them live here. They only ever touch the MAP — the game itself is never modified.
 function wireSlider(key, sliderId, valueId, fallback) {
   const slider = document.getElementById(sliderId);
   const label = document.getElementById(valueId);
@@ -299,15 +160,11 @@ wireSlider('iconBrightness', 'iconBrightness', 'iconBrightnessValue', 0.35);
 
 // Overlay checkboxes.
 //   autoZoom  — off by default; on, the overlay pulls back while you run.
-//   hideFound — on by default; hides POIs you've already marked, in the OVERLAY
-//               only. mapgenie merely fades found POIs to 40% opacity, which stops
-//               reading as a distinction at all once the overlay's own opacity and
-//               brightness are stacked on top. This window keeps showing them, so
-//               you can still find and mark them here.
-//   rotateWithHeading — off by default; turns the OVERLAY's map so the way you're
-//               running is up, which is what makes "the POI is above the marker"
-//               mean "run straight on". THIS window stays north-up regardless:
-//               clicking calibration landmarks on a spinning map is miserable.
+//   hideFound — on by default; hides POIs you've already marked, in the OVERLAY only
+//               (mapgenie merely fades them to 40%). This window keeps showing them.
+//   rotateWithHeading — off by default; turns the OVERLAY's map so the way you're running
+//               is up. This window stays north-up.
+//   areaHud — on by default; the overlay's area readout (the same lines stay above too).
 function wireCheckbox(key, id) {
   const box = document.getElementById(id);
   window.dd2.loadOverlayConfig().then((ocfg) => { box.checked = !!(ocfg && ocfg[key]); });
@@ -317,241 +174,33 @@ function wireCheckbox(key, id) {
 wireCheckbox('autoZoom', 'autoZoom');
 wireCheckbox('hideFound', 'hideFound');
 wireCheckbox('rotateWithHeading', 'rotateWithHeading');
-//   areaHud — on by default; the overlay's area readout: where you are, the nearest
-//             dungeon, and what to press when the app can't work it out on its own
-//             (which building you entered, which floor you're on). Off if you'd rather
-//             the overlay were map and nothing else — the same lines stay in the
-//             readout above.
 wireCheckbox('areaHud', 'areaHud');
 
-nextPointBtn.addEventListener('click', () => armNextClick());
-
-resetBtn.addEventListener('click', () => {
-  points = [];
-  awaitingClick = false;
-  nextPointBtn.disabled = true;
-  runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
-  setStatus('Calibration points cleared. Click "Start Calibration" to begin.');
-});
-
-toggleBtn.addEventListener('click', () => setCalibrationMode(!calibrationMode));
-
-let refining = false;
-const refineBtn = document.getElementById('refineBtn');
-
-refineBtn.addEventListener('click', async () => {
-  if (!calibration || !lastGamePos) return;
-
-  if (!refining) {
-    // Enter refine mode: freeze the marker on screen; map panning underneath
-    // no longer moves it.
-    refining = true;
-    refineBtn.textContent = 'Confirm Refinement';
-    await runInWebview('window.__dd2_marker_frozen__ = true;');
-    setStatus('Refine mode: pan the map so the marker sits exactly on your real position, then click "Confirm Refinement".');
-  } else {
-    // Read the marker's current (unmoved) screen position, unproject it to
-    // find out where it actually is now, and store the gap between that and
-    // what the calibration currently predicts as a constant offset.
-    const result = await webview.executeJavaScript(`
-      (function() {
-        var m = document.getElementById('__dd2_player_marker__');
-        if (!m || !window.map) return null;
-        var x = parseFloat(m.style.left);
-        var y = parseFloat(m.style.top);
-        var ll = window.map.unproject([x, y]);
-        return JSON.stringify({ lng: ll.lng, lat: ll.lat });
-      })();
-    `);
-    if (result) {
-      const { lng, lat } = JSON.parse(result);
-      const newPoint = { gameX: lastGamePos.x, gameY: lastGamePos.y, lng, lat };
-
-      if (currentArea) {
-        // INSIDE A DUNGEON: shift, don't re-fit.
-        //
-        // Every inset shares one scale and rotation, so a dungeon's linear part is
-        // already known and there is nothing left to fit — only the offset can be
-        // wrong. Feeding this correction into a least-squares re-fit would let click
-        // error bend a linear part that isn't in question, and would need three
-        // points to do it. A straight translation is both what's correct here and
-        // what lets you simply drag yourself back into place when a crossing anchor
-        // lands slightly off.
-        const transform = currentTransform();
-        if (!transform) {
-          setStatus('This area has no transform yet — calibrate a dungeon first (3 points) to seed the inset scale.');
-        } else {
-          const predicted = window.DD2Calib.apply(transform, lastGamePos.x, lastGamePos.y);
-          window.dd2.shiftArea({
-            areaKey: currentArea.key,
-            dLng: lng - predicted.lng,
-            dLat: lat - predicted.lat,
-          });
-          setStatus(`Shifted ${currentArea.name} ${currentArea.floor} into place.`.replace(/\s+/g, ' '));
-        }
-      } else if (Array.isArray(calibration.points) && calibration.points.length >= 3) {
-        // Preferred: treat this correction as a NEW far-flung correspondence and
-        // re-fit the whole affine over every point collected so far. Teleport
-        // destinations are spread across the map, so a few jump+refine cycles
-        // pin the scale down and converge to an exact, drift-free calibration —
-        // unlike a constant offset, which is only right at one spot.
-        const pts = calibration.points.concat([newPoint]);
-        // Merge, don't replace: solveAffine returns only {a..f}, and the file also
-        // carries the per-dungeon inset transforms. Assigning its result straight
-        // to `calibration` would drop those on every Refine.
-        calibration = { ...calibration, ...solveAffine(pts), points: pts };
-        // Re-fitting over every point (including this correction) makes any legacy
-        // constant offset redundant — and applying it on top would now double-count.
-        delete calibration.offsetLng;
-        delete calibration.offsetLat;
-        window.dd2.saveCalibration(calibration);
-        const resid = fitResidualGameUnits(calibration);
-        const q = calibrationQuality(pts);
-        let msg = `Added point (${pts.length} total) and re-fit — max fit error ~${resid == null ? '?' : resid.toFixed(1)} game units`;
-        if (q.warnings.length) msg += `; ${q.warnings.join('; ')}`;
-        setStatus(msg + '.');
-      } else {
-        // Legacy calibration without stored points: fall back to a one-off
-        // constant offset (only correct near here) and nudge toward a fresh
-        // calibration, which unlocks the accumulating jump+refine workflow.
-        const k = calibration;
-        const affine = typeof k.e === 'number' && typeof k.f === 'number';
-        const predicted = affine
-          ? { lng: k.a * lastGamePos.x + k.b * lastGamePos.y + k.c, lat: k.d * lastGamePos.x + k.e * lastGamePos.y + k.f }
-          : { lng: k.a * lastGamePos.x + k.b, lat: k.c * lastGamePos.y + k.d };
-        calibration.offsetLng = lng - predicted.lng;
-        calibration.offsetLat = lat - predicted.lat;
-        window.dd2.saveCalibration(calibration);
-        setStatus('Applied a local offset (fixes here only). Tip: Reset and recalibrate once with this version, then each Refine improves the whole map.');
-      }
+// Overlay map style: Full color (mapgenie's raster) vs Edge (our art baked from the game's
+// textures). Edge is only offered once art has been generated into userData/edge — until
+// then the option is disabled and the overlay falls back to the raster anyway.
+function wireMapStyle() {
+  const colorR = document.getElementById('mapStyleColor');
+  const edgeR = document.getElementById('mapStyleEdge');
+  const note = document.getElementById('mapStyleNote');
+  Promise.all([window.dd2.loadOverlayConfig(), window.dd2.edgeArtAvailable()]).then(([ocfg, available]) => {
+    const style = (ocfg && ocfg.mapStyle === 'color') ? 'color' : 'edge';
+    edgeR.disabled = !available;
+    if (!available) {
+      colorR.checked = true;
+      note.textContent = 'Edge maps not generated yet.';
     } else {
-      setStatus('Could not read marker position — refinement not saved.');
+      colorR.checked = style === 'color';
+      edgeR.checked = style === 'edge';
+      note.textContent = '';
     }
-    refining = false;
-    refineBtn.textContent = 'Refine';
-    await runInWebview('window.__dd2_marker_frozen__ = false;');
-  }
-});
+  });
+  colorR.addEventListener('change', () => { if (colorR.checked) window.dd2.setOverlaySetting('mapStyle', 'color'); });
+  edgeR.addEventListener('change', () => { if (edgeR.checked) window.dd2.setOverlaySetting('mapStyle', 'edge'); });
+}
+wireMapStyle();
 
-document.getElementById('debugStyleBtn') && document.getElementById('debugStyleBtn').addEventListener('click', async () => {
-  const result = await webview.executeJavaScript(`
-    (function() {
-      if (!window.map || typeof window.map.getStyle !== 'function') return JSON.stringify({ error: 'no map' });
-      var style = window.map.getStyle();
-      var sources = {};
-      for (var key in style.sources) {
-        var s = style.sources[key];
-        sources[key] = { type: s.type, coordinates: s.coordinates, bounds: s.bounds, tiles: s.tiles };
-      }
-      return JSON.stringify({ sources: sources, transform: window.map.transform ? {
-        lngRange: window.map.transform.lngRange, latRange: window.map.transform.latRange
-      } : null }, null, 1);
-    })();
-  `);
-  console.log('[debug style]', result);
-  setStatus('Style info logged to console.');
-});
-
-document.getElementById('debugMarkerBtn').addEventListener('click', async () => {
-  const result = await webview.executeJavaScript(`
-    (function() {
-      var m = document.getElementById('__dd2_player_marker__');
-      var info = {
-        markerExists: !!m,
-        markerLeft: m ? m.style.left : null,
-        markerTop: m ? m.style.top : null,
-        viewportW: window.innerWidth,
-        viewportH: window.innerHeight,
-        mapCenter: window.map ? window.map.getCenter() : null,
-        mapZoom: window.map ? window.map.getZoom() : null,
-      };
-      return JSON.stringify(info);
-    })();
-  `);
-  console.log('[debug marker info]', result);
-  setStatus('Marker info: ' + result);
-});
-
-window.dd2.onCalibrationClickResult((data) => {
-  if (!awaitingClick) return;
-  if (data.notReady) {
-    setStatus('Map is still loading — wait a moment and click again.');
-    return;
-  }
-  if (!lastGamePos) {
-    setStatus('No live game position yet — is DD2.exe running?');
-    return;
-  }
-  const { lng, lat } = data;
-  points.push({ gameX: lastGamePos.x, gameY: lastGamePos.y, lng, lat });
-  awaitingClick = false;
-  setStatus(`Recorded point ${points.length}/${CALIBRATION_POINT_COUNT}.`);
-
-  if (points.length === CALIBRATION_POINT_COUNT) {
-    const pts = points.map((p) => ({ gameX: p.gameX, gameY: p.gameY, lng: p.lng, lat: p.lat }));
-    const fit = solveAffine(pts);
-    const q = calibrationQuality(points);
-
-    if (currentArea) {
-      // Calibrating INSIDE A DUNGEON seeds the shared inset scale and rotation.
-      // Every inset is drawn alike, so this 2x2 linear part is the ONLY thing all
-      // the others were missing — from here on a dungeon needs no clicks at all,
-      // because walking through its doorway supplies the one correspondence that
-      // pins its offset. You do this once, in one cave.
-      window.dd2.calibrateArea({
-        areaKey: currentArea.key,
-        linear: { a: fit.a, b: fit.b, d: fit.d, e: fit.e },
-        area: {
-          subregionId: Number(String(currentArea.key).split('|')[0]),
-          floor: currentArea.floor,
-          name: currentArea.name,
-          c: fit.c,
-          f: fit.f,
-          points: pts,
-        },
-      }).then((res) => {
-        // The experiment: how does a hand-measured inset scale compare with the one
-        // derived from mapgenie's portal graph? If they agree, the derivation stands
-        // on its own and no dungeon ever needs calibrating.
-        if (res && res.measured && res.derived) {
-          const off = 100 * Math.abs(res.measured - res.derived) / res.derived;
-          setStatus(
-            `Measured ${res.measured.toFixed(3)}x the world scale here, vs ` +
-            `${res.derived.toFixed(3)}x derived from the portal graph — ${off.toFixed(1)}% apart.` +
-            (q.warnings.length ? ` (But ${q.warnings.join('; ')}.)` : ''),
-          );
-        }
-      });
-      runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
-      setCalibrationMode(false);
-      setStatus(`Measuring the inset scale from ${currentArea.name}…`);
-    } else {
-      // Merge rather than replace — the world affine is only part of what this
-      // window holds. Keep the raw correspondences too, so each future Refine can
-      // add a point and re-solve the whole affine (converging toward an exact fit).
-      calibration = { ...calibration, ...fit, points: pts };
-      // A fresh fit supersedes any legacy constant offset. Merging would otherwise
-      // carry a stale one over and apply it on top of the new affine.
-      delete calibration.offsetLng;
-      delete calibration.offsetLat;
-      window.dd2.saveCalibration(calibration);
-      runInWebview('window.__dd2_clear_calib_pins__ && window.__dd2_clear_calib_pins__();');
-      setCalibrationMode(false);
-      refineBtn.disabled = false;
-      // Order matters: setCalibrationMode(false) resets status to "Idle.", so set
-      // the real message afterward.
-      if (q.warnings.length) {
-        setStatus(`Calibration saved, but ${q.warnings.join('; ')}. Jump somewhere far and hit Refine to improve it, or Reset for a wider triangle.`);
-      } else {
-        setStatus('Calibration complete! Marker should now track your position.');
-      }
-    }
-  } else {
-    setStatus(`Point ${points.length} recorded. Walk to another distant landmark, then click "Next Point".`);
-    nextPointBtn.disabled = false;
-  }
-});
-
+// --- Live position -> marker --------------------------------------------------
 window.dd2.onGamePosition((data) => {
   lastGamePos = data;
 
@@ -572,11 +221,8 @@ window.dd2.onGamePosition((data) => {
   if (data.near) {
     lines += `\ndoor  ${data.near.name}  ${data.near.dist.toFixed(1)}u`;
   }
-  // What the app is unsure about, and the key that settles it — the same text the
-  // overlay shows, so the two windows never tell you different stories. Chiefly: the
-  // game's "inside" flag fires for buildings too, and the nearest entrance is only
-  // believed within dungeonEnterRadius, so walking into a house says so here instead of
-  // silently calibrating a dungeon on the other side of the map.
+  // What the app is unsure about, and the key that settles it — the same text the overlay
+  // shows, so the two windows never tell you different stories.
   if (data.placeName) {
     lines += `\nin    ${data.placeName}${data.placeCategory ? ` (${data.placeCategory})` : ''}`;
   }
@@ -587,25 +233,21 @@ window.dd2.onGamePosition((data) => {
   coordsEl.textContent = lines;
 
   if (calibration) {
-    // The transform depends on where you ARE: the overworld affine out in the
-    // world, that dungeon's inset transform underground. null = we can't place this
-    // area, in which case leave the marker where it is rather than drawing it
-    // somewhere confidently wrong.
+    // The transform depends on where you ARE: the overworld affine out in the world, that
+    // dungeon's inset transform underground. null = we can't place this area, in which case
+    // leave the marker where it is rather than drawing it somewhere confidently wrong.
     const transform = currentTransform();
     const lngLat = transform && window.DD2Calib.apply(transform, data.x, data.y);
     const valid = window.DD2Calib.isValidLngLat(lngLat);
     if (valid) {
-      // Inject the resident updater once, then drive it with a tiny per-tick
-      // call. Follow is suppressed during refine (marker is frozen while the
-      // user pans to align).
+      // Inject the resident updater once, then drive it with a tiny per-tick call.
       if (!markerInstalled) {
         runInWebview(INSTALL_MARKER);
         markerInstalled = true;
       }
-      const follow = followPlayer && !refining ? 1 : 0;
-      // "Moved" in game units: standing still reads a constant value, so any real
-      // movement clears a manual pan and resumes follow. Deadband is per-tick, so
-      // it scales with the ~33ms poll (≈4-5 units/sec) and ignores idle jitter.
+      const follow = followPlayer ? 1 : 0;
+      // "Moved" in game units: standing still reads a constant value, so any real movement
+      // clears a manual pan and resumes follow. Deadband is per-tick (≈4-5 units/sec).
       const moved = !prevGamePos
         || Math.hypot(data.x - prevGamePos.x, data.y - prevGamePos.y) > 0.15 ? 1 : 0;
       prevGamePos = { x: data.x, y: data.y };
@@ -620,13 +262,7 @@ window.dd2.onGamePosition((data) => {
 });
 
 window.dd2.loadCalibration().then((saved) => {
-  if (saved) {
-    calibration = saved;
-    refineBtn.disabled = false;
-    setStatus('Loaded saved calibration.');
-  } else {
-    setStatus('No saved calibration yet. Click "Start Calibration" to begin.');
-  }
+  if (saved) calibration = saved;
 });
 
 // Zoom behavior: open at mapgenie's default (far) view, then glide once to the

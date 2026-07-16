@@ -12,6 +12,7 @@ contextBridge.exposeInMainWorld('dd2', {
   loadOverlayConfig: () => ipcRenderer.invoke('overlay:config:load'),
   setOverlayNumber: (key, value) => ipcRenderer.send('overlay:number', { key, value }),
   setOverlaySetting: (key, value) => ipcRenderer.send('overlay:setting', { key, value }),
+  edgeArtAvailable: () => ipcRenderer.invoke('overlay:edge-available'),
 
   // Dungeon areas: mapgenie's portal graph, and the per-dungeon inset transforms.
   saveAreaMetadata: (meta) => ipcRenderer.invoke('areas:metadata', meta),

@@ -994,13 +994,29 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
   numberSaveTimer = setTimeout(() => overlayConfig.save(cfg), 500);
 });
 
-// Boolean overlay settings toggled from the control window.
+// Overlay settings toggled from the control window: booleans plus the string mapStyle.
 const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
-  if (!SETTING_KEYS.includes(key)) return;
-  cfg[key] = !!value;
-  overlayWindow.send('overlay:setting', { key, value: !!value });
-  overlayConfig.save(cfg);
+  if (SETTING_KEYS.includes(key)) {
+    cfg[key] = !!value;
+    overlayWindow.send('overlay:setting', { key, value: !!value });
+    overlayConfig.save(cfg);
+  } else if (key === 'mapStyle' && (value === 'edge' || value === 'color')) {
+    cfg.mapStyle = value;
+    overlayWindow.send('overlay:setting', { key, value });
+    overlayConfig.save(cfg);
+  }
+});
+
+// Whether any baked edge art exists (userData/edge/*.png) — the control window uses this to
+// enable/disable the Edge map style. Read fresh so it reflects a just-finished generation.
+ipcMain.handle('overlay:edge-available', async () => {
+  try {
+    const files = await fsp.readdir(path.join(app.getPath('userData'), 'edge'));
+    return files.some((f) => /\.png$/i.test(f));
+  } catch {
+    return false;
+  }
 });
 
 ipcMain.handle('overlay:config:load', () => cfg);
