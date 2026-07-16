@@ -6,9 +6,12 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('dd2overlay', {
   onGamePosition: (callback) => ipcRenderer.on('game-position', (_event, data) => callback(data)),
 
-  // Hotkey commands from main: 'overlay:basemap' (bool), 'overlay:zoom-delta'
-  // (number), 'overlay:interactive' (bool — Alt held).
+  // Hotkey commands from main: 'overlay:mode' ('icons'|'map'|'window'), 'overlay:zoom-delta'
+  // (number), 'overlay:interactive' (bool — Alt toggle).
   onCommand: (channel, callback) => ipcRenderer.on(channel, (_event, data) => callback(data)),
+
+  // The windowed-mode box was moved/resized — persist it (screen fractions).
+  saveWindowRect: (rect) => ipcRenderer.send('overlay:save-window-rect', rect),
 
   loadCalibration: () => ipcRenderer.invoke('calibration:load'),
   loadOverlayConfig: () => ipcRenderer.invoke('overlay:config:load'),

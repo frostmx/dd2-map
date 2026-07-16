@@ -1,0 +1,9 @@
+{
+  "_comment": "Static pointer chains to the game's current-map-area record. The record holds int32 LocalArea at +0 and int32 UIArea at uiAreaRel. LocalArea is unique per (area, floor); -1 = overworld. The record is one slot in a ~43k-slot array, so a drifted chain can resolve to a stale slot -- localAreaReader resolves BOTH chains, prefers the value they agree on, and verifies (uiArea,localArea) is a real pair in config/localAreas.json. If one chain drifts it fails that check and the other still stands. Both chains verified live resolving to the same record (426 = Forgotten Tunnel 1F). See .map/README.md.",
+  "module": "DD2.exe",
+  "uiAreaRel": -12,
+  "chains": [
+    { "static": "0xF8E11C0", "offsets": ["0x548", "0x28", "0x278"] },
+    { "static": "0xF8D5268", "offsets": ["0x68", "0x5F8", "0x28", "0x278"] }
+  ]
+}

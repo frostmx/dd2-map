@@ -1,0 +1,2542 @@
+{
+ "insetLinear": {
+  "a": 0.00016487757727340056,
+  "b": 4.8127004715717985e-08,
+  "d": 2.698773149403029e-07,
+  "e": -0.0001649164472867197,
+  "scale": 1.9225512902983466,
+  "samples": 17,
+  "derived": true
+ },
+ "byLocalArea": {
+  "149": {
+   "title": "Vernworth Castle",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "147": {
+   "title": "Vernworth Castle",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "148": {
+   "title": "Vernworth Castle",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "151": {
+   "title": "Vernworth Castle",
+   "floorNo": 2,
+   "floorLabel": "3F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "152": {
+   "title": "Vernworth Castle",
+   "floorNo": 3,
+   "floorLabel": "4F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "150": {
+   "title": "Vernworth Castle",
+   "floorNo": -2,
+   "floorLabel": "B2F",
+   "isDungeon": false,
+   "box": [
+    256,
+    -1083,
+    768,
+    -571
+   ],
+   "uiArea": 1,
+   "overworld": true,
+   "texBox": [
+    258,
+    -1084,
+    770,
+    -572
+   ]
+  },
+  "338": {
+   "subregionId": 2493,
+   "title": "Coral Snakes' Hideout",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.1542,
+   "c": -0.8112818051025678,
+   "f": 0.7533281587267914,
+   "box": [
+    -1342,
+    90,
+    -830,
+    602
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1011
+  },
+  "337": {
+   "subregionId": 2488,
+   "title": "Forbidden Magick Research Lab",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.219,
+   "c": -0.7691389370605756,
+   "f": 0.7605373324246124,
+   "box": [
+    -1342,
+    90,
+    -830,
+    602
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1011
+  },
+  "341": {
+   "title": "Vernworth",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    248,
+    -1250,
+    760,
+    -738
+   ],
+   "uiArea": 2,
+   "overworld": true,
+   "texBox": [
+    248,
+    -1251,
+    760,
+    -739
+   ]
+  },
+  "342": {
+   "subregionId": 2451,
+   "title": "The Mountains' Secret",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7459,
+   "c": -0.7176675133255976,
+   "f": 0.5153331461585087,
+   "box": [
+    176,
+    -2955,
+    432,
+    -2699
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3000
+  },
+  "343": {
+   "subregionId": 2470,
+   "title": "Backwoods Nest",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7931,
+   "c": -0.815701726918842,
+   "f": 0.5719727975060027,
+   "box": [
+    -78,
+    -2766,
+    50,
+    -2638
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3001
+  },
+  "344": {
+   "subregionId": 2472,
+   "title": "Mt. Alles Tunnel",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7892,
+   "c": -1.002621038918859,
+   "f": 0.7199310628645983,
+   "box": [
+    1145,
+    -1999,
+    1273,
+    -1871
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3002
+  },
+  "346": {
+   "subregionId": 2494,
+   "title": "Frightful Hollow",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7836,
+   "c": -0.9527484925260935,
+   "f": 0.7438211895952842,
+   "box": [
+    1287,
+    -1703,
+    1351,
+    -1639
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3004
+  },
+  "347": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7925,
+   "c": -1.0811326153908467,
+   "f": 0.8076735275453837,
+   "box": [
+    1014,
+    -1335,
+    1142,
+    -1207
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3005
+  },
+  "348": {
+   "subregionId": 2484,
+   "title": "Spirits' Path",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7483,
+   "c": -0.6776435042818777,
+   "f": 0.8348993859811349,
+   "box": [
+    1090,
+    -1303,
+    1218,
+    -1175
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3006
+  },
+  "354": {
+   "subregionId": 2454,
+   "title": "Enoa'Battahl Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5878,
+   "c": -0.7362080924919601,
+   "f": 0.7626595392665868,
+   "box": [
+    958,
+    -1492,
+    1214,
+    -1236
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3009
+  },
+  "368": {
+   "subregionId": 2495,
+   "title": "Underbridge Grotto",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7793,
+   "c": -0.8549971685652218,
+   "f": 0.8061142123573468,
+   "box": [
+    1187,
+    -1327,
+    1251,
+    -1263
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3023
+  },
+  "349": {
+   "subregionId": 2469,
+   "title": "Coastal Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7849,
+   "c": -1.0027604115877105,
+   "f": 0.8197042173823699,
+   "box": [
+    826,
+    -1266,
+    954,
+    -1138
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3007
+  },
+  "355": {
+   "subregionId": 2449,
+   "title": "Collapsed Mine",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.4243,
+   "c": -0.6625489083251164,
+   "f": 0.7694849898837387,
+   "box": [
+    -545,
+    -1464,
+    -289,
+    -1208
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3010
+  },
+  "358": {
+   "subregionId": 2471,
+   "title": "River's Edge Grotto",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.8105,
+   "c": -0.7376543072433724,
+   "f": 0.7554556933356388,
+   "box": [
+    -433,
+    -1654,
+    -305,
+    -1526
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3013
+  },
+  "360": {
+   "subregionId": 2475,
+   "title": "Hidden Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7504,
+   "c": -0.6890112725625173,
+   "f": 0.7299741630911498,
+   "box": [
+    -134,
+    -1833,
+    -6,
+    -1705
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3015
+  },
+  "361": {
+   "subregionId": 2446,
+   "title": "Rain Shelter Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7907,
+   "c": -0.6424429423691448,
+   "f": 0.7004621587948345,
+   "box": [
+    -305,
+    -1968,
+    -241,
+    -1904
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3016
+  },
+  "359": {
+   "subregionId": 2465,
+   "title": "Darkhorde Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7911,
+   "c": -0.8182553121780798,
+   "f": 0.7224589141267576,
+   "box": [
+    -701,
+    -1854,
+    -573,
+    -1726
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3014
+  },
+  "363": {
+   "subregionId": 2476,
+   "title": "Dead-End Curve",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.6774,
+   "c": -0.4637283111912468,
+   "f": 0.7876088020354755,
+   "box": [
+    -1413,
+    -1521,
+    -1157,
+    -1265
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3018
+  },
+  "364": {
+   "subregionId": 2467,
+   "title": "Putrid Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7053,
+   "c": -0.6702125926681674,
+   "f": 0.8149675082862043,
+   "box": [
+    -1282,
+    -1396,
+    -1218,
+    -1332
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3019
+  },
+  "365": {
+   "subregionId": 2464,
+   "title": "Riverside Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.6953,
+   "c": -0.48166967631677726,
+   "f": 0.8271898239636916,
+   "box": [
+    -969,
+    -1299,
+    -713,
+    -1043
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3020
+  },
+  "367": {
+   "subregionId": 2468,
+   "title": "Shrine Corridor",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.6728,
+   "c": -0.639469860315668,
+   "f": 0.773970318321811,
+   "box": [
+    -1345,
+    -1678,
+    -1217,
+    -1550
+   ],
+   "texRange": 128,
+   "texSize": 512,
+   "uiArea": 3022
+  },
+  "395": {
+   "subregionId": 2565,
+   "title": "Caliginous Depths",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.683,
+   "c": -0.5617957992982983,
+   "f": 1.1727873841245602,
+   "box": [
+    -2138,
+    739,
+    -2010,
+    867
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3126
+  },
+  "371": {
+   "subregionId": 2555,
+   "title": "Dimdark Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7826,
+   "c": -0.31198401369004425,
+   "f": 0.9752883689081615,
+   "box": [
+    -2025,
+    -308,
+    -1961,
+    -244
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3102
+  },
+  "369": {
+   "subregionId": 2454,
+   "title": "Enoa'Battahl Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.8248,
+   "c": -0.26683369132432877,
+   "f": 0.9012610155098444,
+   "box": [
+    -1951,
+    -648,
+    -1695,
+    -392
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3100
+  },
+  "370": {
+   "subregionId": 2501,
+   "title": "Rocky Crevasse",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7927,
+   "c": -0.4931871362607797,
+   "f": 0.9469794848996228,
+   "box": [
+    -2155,
+    -496,
+    -2027,
+    -368
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3101
+  },
+  "374": {
+   "subregionId": 2454,
+   "title": "Enoa'Battahl Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.4651,
+   "c": -0.19155035957457328,
+   "f": 0.9429889446371787,
+   "box": [
+    -2378,
+    -404,
+    -2122,
+    -148
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3105
+  },
+  "377": {
+   "subregionId": 2496,
+   "title": "Echoing Depths",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.4952,
+   "c": -0.17818794951693767,
+   "f": 1.012154249556726,
+   "box": [
+    -2279,
+    -152,
+    -2023,
+    104
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3108
+  },
+  "373": {
+   "subregionId": 2497,
+   "title": "Holy Mausoleum Ruins",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5814,
+   "c": -0.3079569815248629,
+   "f": 0.9921303599690652,
+   "box": [
+    -1874,
+    -279,
+    -1618,
+    -23
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3104
+  },
+  "376": {
+   "subregionId": 2554,
+   "title": "Highland Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7777,
+   "c": -0.44397164521573834,
+   "f": 1.017219419562568,
+   "box": [
+    -1996,
+    -202,
+    -1868,
+    -74
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3107
+  },
+  "375": {
+   "subregionId": 2482,
+   "title": "Tomb of Te'Glarr",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5269,
+   "c": -0.14092923352777592,
+   "f": 0.971697044691156,
+   "box": [
+    -2634,
+    -426,
+    -2378,
+    -170
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3106
+  },
+  "378": {
+   "subregionId": 2504,
+   "title": "Sandsear Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.4619,
+   "c": -0.24461435751494398,
+   "f": 1.031057897840586,
+   "box": [
+    -1746,
+    -62,
+    -1490,
+    194
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3109
+  },
+  "379": {
+   "subregionId": 2502,
+   "title": "Roadside Hollow",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7312,
+   "c": -0.15877080580804565,
+   "f": 1.035998502390148,
+   "box": [
+    -2047,
+    45,
+    -1983,
+    109
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3110
+  },
+  "380": {
+   "subregionId": 2446,
+   "title": "Rain Shelter Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5914,
+   "c": -0.37998683337071065,
+   "f": 1.024537782178842,
+   "box": [
+    -1900,
+    -5,
+    -1836,
+    59
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3111
+  },
+  "381": {
+   "subregionId": 2481,
+   "title": "Eremitic Sanctuary",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7828,
+   "c": -0.27015159461177607,
+   "f": 1.05477503015503,
+   "box": [
+    -1828,
+    26,
+    -1700,
+    154
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3112
+  },
+  "383": {
+   "subregionId": 2578,
+   "title": "Tomb of Renu'LeBarr",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7478,
+   "c": -0.14935983338203423,
+   "f": 1.0809963684273731,
+   "box": [
+    -1987,
+    217,
+    -1923,
+    281
+   ],
+   "texRange": 64,
+   "texSize": 512,
+   "uiArea": 3114
+  },
+  "386": {
+   "subregionId": 2500,
+   "title": "Pilgrims' Peril Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.824,
+   "c": -0.6237212381207771,
+   "f": 1.1054731477399953,
+   "box": [
+    -1602,
+    467,
+    -1474,
+    595
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3117
+  },
+  "396": {
+   "subregionId": 2498,
+   "title": "Howling Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.829,
+   "c": -0.5092646250073602,
+   "f": 1.0577224449434113,
+   "box": [
+    -1725,
+    43,
+    -1597,
+    171
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3127
+  },
+  "392": {
+   "subregionId": 2444,
+   "title": "Tomb of Al'Guttos",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.606,
+   "c": -0.6532338864855964,
+   "f": 0.7188888431908358,
+   "box": [
+    -2438,
+    61,
+    -2182,
+    317
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3123
+  },
+  "391": {
+   "subregionId": 2499,
+   "title": "Darkbeasts' Den",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.8239,
+   "c": -0.31908413114161355,
+   "f": 1.105365464898629,
+   "box": [
+    -2270,
+    331,
+    -2142,
+    459
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3122
+  },
+  "382": {
+   "subregionId": 2580,
+   "title": "Sealed Mining Shaft",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5206,
+   "c": -0.12086314964896994,
+   "f": 1.0457309704595408,
+   "box": [
+    -2216,
+    21,
+    -1960,
+    277
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3113
+  },
+  "388": {
+   "subregionId": 2483,
+   "title": "Tomb of Ja'Nuwa",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7845,
+   "c": -0.21116408028450456,
+   "f": 1.141951812890279,
+   "box": [
+    -1859,
+    553,
+    -1731,
+    681
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3119
+  },
+  "389": {
+   "subregionId": 2477,
+   "title": "Canyon Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.8189,
+   "c": -0.3970744887709944,
+   "f": 1.1507202080834846,
+   "box": [
+    -1669,
+    607,
+    -1541,
+    735
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3120
+  },
+  "393": {
+   "subregionId": 2445,
+   "title": "Sandspire Den",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.3764,
+   "c": -0.6539392016165266,
+   "f": 0.7640052031207306,
+   "box": [
+    -1854,
+    730,
+    -1598,
+    986
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3124
+  },
+  "394": {
+   "subregionId": 2485,
+   "title": "Sal'Battahl Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5539,
+   "c": -0.12765782487482152,
+   "f": 1.2039099749391227,
+   "box": [
+    -2098,
+    895,
+    -1842,
+    1151
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3125
+  },
+  "387": {
+   "subregionId": 2443,
+   "title": "Stragglers' Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.3052,
+   "c": -0.8007403850967515,
+   "f": 0.7103318291057825,
+   "box": [
+    -1572,
+    99,
+    -1316,
+    355
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3118
+  },
+  "449": {
+   "subregionId": 2517,
+   "title": "Vernworth - Southern Ruins",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.7811,
+   "c": -0.7472112890876572,
+   "f": 0.6015379483782493,
+   "box": [
+    -1400,
+    -1800,
+    -1144,
+    -1544
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1008
+  },
+  "474": {
+   "subregionId": 2500,
+   "title": "Pilgrims' Peril Cave",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.3245,
+   "c": -0.6576898810066025,
+   "f": 0.7371311383932961,
+   "box": [
+    -1400,
+    -1800,
+    -1144,
+    -1544
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1008
+  },
+  "473": {
+   "subregionId": 2469,
+   "title": "Coastal Cavern",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.3507,
+   "c": -0.6381204840339463,
+   "f": 0.7438248356995165,
+   "box": [
+    -1400,
+    -1800,
+    -1144,
+    -1544
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1008
+  },
+  "451": {
+   "subregionId": 2486,
+   "title": "Worldsend Cavern",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.2516,
+   "c": -0.7033775303953964,
+   "f": 0.5976086610820468,
+   "box": [
+    -1680,
+    -1498,
+    -1424,
+    -1242
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 2003
+  },
+  "450": {
+   "subregionId": 2517,
+   "title": "Vernworth - Southern Ruins",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.3693,
+   "c": -0.6440685246580917,
+   "f": 0.6301348232935354,
+   "box": [
+    -1680,
+    -1498,
+    -1424,
+    -1242
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 2003
+  },
+  "501": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7366,
+   "c": -0.588429058512578,
+   "f": 0.5170233013011686,
+   "box": [
+    -2440,
+    -722,
+    -2312,
+    -594
+   ],
+   "texRange": 128,
+   "texSize": 512,
+   "uiArea": 1009
+  },
+  "506": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.5445,
+   "c": -0.61429345793971,
+   "f": 0.8001271295814506,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "502": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.3184,
+   "c": -0.6169542092824835,
+   "f": 0.8027877098278983,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "503": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.4048,
+   "c": -0.6175550241018194,
+   "f": 0.8050191631457857,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "504": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 2,
+   "floorLabel": "3F",
+   "isDungeon": true,
+   "score": 0.3885,
+   "c": -0.6160959023977178,
+   "f": 0.8040750868628131,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "505": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 3,
+   "floorLabel": "4F",
+   "isDungeon": true,
+   "score": 0.4177,
+   "c": -0.6136926431203741,
+   "f": 0.7297500008007882,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "507": {
+   "subregionId": 2490,
+   "title": "Dragonsbreath Tower",
+   "floorNo": 4,
+   "floorLabel": "5F",
+   "isDungeon": true,
+   "score": 0.4132,
+   "c": -0.6138643044973272,
+   "f": 0.7180776093373479,
+   "box": [
+    -2322,
+    916,
+    -2066,
+    1172
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1014
+  },
+  "508": {
+   "subregionId": 2457,
+   "title": "Nameless Village Depths",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7434,
+   "c": -0.7166982084182022,
+   "f": 0.5877663871343997,
+   "box": [
+    1468,
+    -1488,
+    1596,
+    -1360
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 1022
+  },
+  "513": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.2855,
+   "c": -0.7540025335388165,
+   "f": 0.8961748284646034,
+   "box": [
+    -1143,
+    -1022,
+    -631,
+    -510
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1005
+  },
+  "512": {
+   "subregionId": 2492,
+   "title": "Guerco Cavern",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.2991,
+   "c": -0.5370225530700665,
+   "f": 0.28700504232968416,
+   "box": [
+    -1143,
+    -1022,
+    -631,
+    -510
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1005
+  },
+  "509": {
+   "subregionId": 2462,
+   "title": "Digger's Ruins",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.6414,
+   "c": -0.6623026156412248,
+   "f": 0.533162424960625,
+   "box": [
+    -1621,
+    474,
+    -1365,
+    730
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1012
+  },
+  "520": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.4358,
+   "c": -0.6586977267252092,
+   "f": 1.1213073419568853,
+   "box": [
+    -1621,
+    474,
+    -1365,
+    730
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1012
+  },
+  "521": {
+   "subregionId": 2445,
+   "title": "Sandspire Den",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.3321,
+   "c": -0.6935449862466936,
+   "f": 0.7259291482663563,
+   "box": [
+    -1621,
+    474,
+    -1365,
+    730
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1012
+  },
+  "527": {
+   "subregionId": 2491,
+   "title": "Mountain Base Cave",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.3619,
+   "c": -0.28620847619167966,
+   "f": 1.1415294992933223,
+   "box": [
+    -618,
+    1294,
+    -362,
+    1550
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1018
+  },
+  "528": {
+   "subregionId": 2491,
+   "title": "Mountain Base Cave",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.563,
+   "c": -0.30251630700222654,
+   "f": 1.1592082577494018,
+   "box": [
+    -618,
+    1294,
+    -362,
+    1550
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1018
+  },
+  "529": {
+   "subregionId": 2491,
+   "title": "Mountain Base Cave",
+   "floorNo": 2,
+   "floorLabel": "3F",
+   "isDungeon": true,
+   "score": 0.3854,
+   "c": -0.30981191552273435,
+   "f": 1.1588649817379058,
+   "box": [
+    -618,
+    1294,
+    -362,
+    1550
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1018
+  },
+  "336": {
+   "title": "Bakbattahl",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -1329,
+    205,
+    -817,
+    717
+   ],
+   "uiArea": 3,
+   "overworld": true,
+   "texBox": [
+    -1330,
+    202,
+    -818,
+    714
+   ]
+  },
+  "543": {
+   "subregionId": 2458,
+   "title": "Headwater Cavern",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.626,
+   "c": -0.47190259517145544,
+   "f": 0.5695679081301904,
+   "box": [
+    -74,
+    -1400,
+    182,
+    -1144
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 2005
+  },
+  "544": {
+   "subregionId": 2467,
+   "title": "Putrid Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7948,
+   "c": -0.6874610495759386,
+   "f": 0.8949704743874269,
+   "box": [
+    -1215,
+    -942,
+    -1087,
+    -814
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 2001
+  },
+  "545": {
+   "subregionId": 2450,
+   "title": "Ancestral Chamber",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.1727,
+   "c": -0.6726504436759444,
+   "f": 0.6199196115931829,
+   "box": [
+    -460,
+    -2517,
+    52,
+    -2005
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1004
+  },
+  "418": {
+   "subregionId": 2452,
+   "title": "Trembling Hollow",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.674,
+   "c": -0.6998217685162847,
+   "f": 0.7564815647225276,
+   "box": [
+    261,
+    -1528,
+    517,
+    -1272
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3008
+  },
+  "419": {
+   "subregionId": 2452,
+   "title": "Trembling Hollow",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.385,
+   "c": -0.6988776309430426,
+   "f": 0.7589702681297716,
+   "box": [
+    261,
+    -1528,
+    517,
+    -1272
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3008
+  },
+  "553": {
+   "subregionId": 2493,
+   "title": "Coral Snakes' Hideout",
+   "floorNo": 2,
+   "floorLabel": "3F",
+   "isDungeon": false,
+   "score": 0.2644,
+   "c": -0.625391449416254,
+   "f": 0.7053869080498729,
+   "box": [
+    -2473,
+    -214,
+    -1961,
+    298
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1013
+  },
+  "552": {
+   "subregionId": 2493,
+   "title": "Coral Snakes' Hideout",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.5015,
+   "c": -0.6250481266623478,
+   "f": 0.6907110603535602,
+   "box": [
+    -2473,
+    -214,
+    -1961,
+    298
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1013
+  },
+  "551": {
+   "subregionId": 2493,
+   "title": "Coral Snakes' Hideout",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.307,
+   "c": -0.6532864231711368,
+   "f": 0.6900244698148397,
+   "box": [
+    -2473,
+    -214,
+    -1961,
+    298
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1013
+  },
+  "554": {
+   "subregionId": 2517,
+   "title": "Vernworth - Southern Ruins",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.6667,
+   "c": -1.0026397671868406,
+   "f": 0.7653641436507033,
+   "box": [
+    205,
+    -798,
+    461,
+    -542
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 2018
+  },
+  "548": {
+   "subregionId": 2489,
+   "title": "Mountain Shrine",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.3892,
+   "c": -1.161862541361948,
+   "f": 0.11581925117797054,
+   "box": [
+    784,
+    -2417,
+    1296,
+    -1905
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 2019
+  },
+  "547": {
+   "subregionId": 2517,
+   "title": "Vernworth - Southern Ruins",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.3154,
+   "c": -1.130877662821909,
+   "f": 0.5336088030415385,
+   "box": [
+    784,
+    -2417,
+    1296,
+    -1905
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 2019
+  },
+  "549": {
+   "subregionId": 2442,
+   "title": "Drabnir's Grotto",
+   "floorNo": -2,
+   "floorLabel": "B2F",
+   "isDungeon": true,
+   "score": 0.2096,
+   "c": -0.7452973379475238,
+   "f": 0.9776221175842764,
+   "box": [
+    -1604,
+    1013,
+    -1092,
+    1525
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1015
+  },
+  "557": {
+   "subregionId": 2442,
+   "title": "Drabnir's Grotto",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.2142,
+   "c": -0.7233246816975238,
+   "f": 0.9777937617983431,
+   "box": [
+    -1604,
+    1013,
+    -1092,
+    1525
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1015
+  },
+  "558": {
+   "subregionId": 2442,
+   "title": "Drabnir's Grotto",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.1225,
+   "c": -0.7216938986164692,
+   "f": 0.949472369232451,
+   "box": [
+    -1604,
+    1013,
+    -1092,
+    1525
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1015
+  },
+  "559": {
+   "subregionId": 2488,
+   "title": "Forbidden Magick Research Lab",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.0374,
+   "c": -0.7043560995442035,
+   "f": 0.9250128307208275,
+   "box": [
+    -1604,
+    1013,
+    -1092,
+    1525
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1015
+  },
+  "429": {
+   "subregionId": 2496,
+   "title": "Echoing Depths",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.6585,
+   "c": -0.19576334753955532,
+   "f": 0.9922952808146294,
+   "box": [
+    -2062,
+    -296,
+    -1934,
+    -168
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3103
+  },
+  "430": {
+   "subregionId": 2481,
+   "title": "Eremitic Sanctuary",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.5522,
+   "c": -0.231726406011235,
+   "f": 0.9989031470199977,
+   "box": [
+    -2062,
+    -296,
+    -1934,
+    -168
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3103
+  },
+  "406": {
+   "title": "Borderwatch Outpost",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    240,
+    -2663,
+    496,
+    -2407
+   ],
+   "uiArea": 105,
+   "overworld": true,
+   "texBox": [
+    240,
+    -2664,
+    496,
+    -2408
+   ]
+  },
+  "407": {
+   "title": "Melve",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    32,
+    -2278,
+    288,
+    -2022
+   ],
+   "uiArea": 106,
+   "overworld": true,
+   "texBox": [
+    32,
+    -2278,
+    288,
+    -2022
+   ]
+  },
+  "420": {
+   "subregionId": 2448,
+   "title": "Depleted Ore Deposit",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.5104,
+   "c": -0.6750714865994404,
+   "f": 0.7732978367371602,
+   "box": [
+    -607,
+    -1467,
+    -351,
+    -1211
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3011
+  },
+  "421": {
+   "subregionId": 2448,
+   "title": "Depleted Ore Deposit",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.365,
+   "c": -0.6752431479763935,
+   "f": 0.7664324519314533,
+   "box": [
+    -607,
+    -1467,
+    -351,
+    -1211
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3011
+  },
+  "422": {
+   "subregionId": 2473,
+   "title": "Derelict Mine",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.5635,
+   "c": -0.6962544240837045,
+   "f": 0.7822977301138286,
+   "box": [
+    -428,
+    -1562,
+    -300,
+    -1434
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3012
+  },
+  "423": {
+   "subregionId": 2473,
+   "title": "Derelict Mine",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.6633,
+   "c": -0.696168593395228,
+   "f": 0.7706266570994423,
+   "box": [
+    -428,
+    -1562,
+    -300,
+    -1434
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3012
+  },
+  "424": {
+   "subregionId": 2554,
+   "title": "Highland Cavern",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.5142,
+   "c": -0.707154921520228,
+   "f": 0.7925098836228027,
+   "box": [
+    -428,
+    -1562,
+    -300,
+    -1434
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3012
+  },
+  "427": {
+   "subregionId": 2461,
+   "title": "Strange Corridor",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.5026,
+   "c": -0.24554367237708877,
+   "f": 0.4612197760241867,
+   "box": [
+    -958,
+    -1652,
+    -702,
+    -1396
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3021
+  },
+  "428": {
+   "subregionId": 2461,
+   "title": "Strange Corridor",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.609,
+   "c": -0.2457153337540419,
+   "f": 0.4481745612636017,
+   "box": [
+    -958,
+    -1652,
+    -702,
+    -1396
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3021
+  },
+  "581": {
+   "title": "Nameless Village",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    1409,
+    -1513,
+    1665,
+    -1257
+   ],
+   "uiArea": 110,
+   "overworld": true,
+   "texBox": [
+    1408,
+    -1514,
+    1664,
+    -1258
+   ]
+  },
+  "425": {
+   "subregionId": 2447,
+   "title": "Forgotten Tunnel",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.7923,
+   "c": -0.6907158588911806,
+   "f": 0.6695360083508218,
+   "box": [
+    -678,
+    -2076,
+    -422,
+    -1820
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3017
+  },
+  "426": {
+   "subregionId": 2447,
+   "title": "Forgotten Tunnel",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.5741,
+   "c": -0.7109719013716493,
+   "f": 0.6695360083508218,
+   "box": [
+    -678,
+    -2076,
+    -422,
+    -1820
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 3017
+  },
+  "408": {
+   "title": "Harve Village",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -509,
+    -830,
+    -253,
+    -574
+   ],
+   "uiArea": 107,
+   "overworld": true,
+   "texBox": [
+    -509,
+    -830,
+    -253,
+    -574
+   ]
+  },
+  "410": {
+   "title": "Sacred Arbor",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -704,
+    -2392,
+    -448,
+    -2136
+   ],
+   "uiArea": 111,
+   "overworld": true,
+   "texBox": [
+    -679,
+    -2320,
+    -526,
+    -2166
+   ]
+  },
+  "413": {
+   "title": "Volcanic Island Camp",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -597,
+    929,
+    -85,
+    1441
+   ],
+   "uiArea": 116,
+   "overworld": true,
+   "texBox": [
+    -38,
+    1494,
+    320,
+    1852
+   ]
+  },
+  "600": {
+   "title": "Excavation Site",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    87,
+    1043,
+    599,
+    1555
+   ],
+   "uiArea": 117,
+   "overworld": true
+  },
+  "411": {
+   "title": "Checkpoint Rest Town",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -2173,
+    -1114,
+    -1661,
+    -602
+   ],
+   "uiArea": 112,
+   "overworld": true,
+   "texBox": [
+    -2172,
+    -1114,
+    -1660,
+    -602
+   ]
+  },
+  "603": {
+   "subregionId": 2460,
+   "title": "Stormwind Cave",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.2241,
+   "c": -0.3590148710143113,
+   "f": 0.6829704444227449,
+   "box": [
+    -748,
+    -523,
+    -236,
+    -11
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1105
+  },
+  "604": {
+   "subregionId": 2460,
+   "title": "Stormwind Cave",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.1758,
+   "c": -0.3434795164000535,
+   "f": 0.6816830998666548,
+   "box": [
+    -748,
+    -523,
+    -236,
+    -11
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1105
+  },
+  "596": {
+   "subregionId": 2516,
+   "title": "Moonglint Tower",
+   "floorNo": 3,
+   "floorLabel": "4F",
+   "isDungeon": true,
+   "score": 0.3723,
+   "c": -0.6229822941714409,
+   "f": 0.6974831660905269,
+   "box": [
+    70,
+    1431,
+    582,
+    1943
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1017
+  },
+  "595": {
+   "subregionId": 2516,
+   "title": "Moonglint Tower",
+   "floorNo": 2,
+   "floorLabel": "3F",
+   "isDungeon": true,
+   "score": 0.3294,
+   "c": -0.6199782200747612,
+   "f": 0.6872696382186068,
+   "box": [
+    70,
+    1431,
+    582,
+    1943
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1017
+  },
+  "593": {
+   "subregionId": 2516,
+   "title": "Moonglint Tower",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.2602,
+   "c": -0.6216948338442925,
+   "f": 0.6886428865051762,
+   "box": [
+    70,
+    1431,
+    582,
+    1943
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1017
+  },
+  "594": {
+   "subregionId": 2516,
+   "title": "Moonglint Tower",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.3856,
+   "c": -0.61826160630523,
+   "f": 0.6857247335863692,
+   "box": [
+    70,
+    1431,
+    582,
+    1943
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1017
+  },
+  "415": {
+   "title": "Seafloor Shrine - Sacred Grounds",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -793,
+    -442,
+    -281,
+    70
+   ],
+   "uiArea": 118,
+   "overworld": true,
+   "texBox": [
+    -506,
+    318,
+    -250,
+    574
+   ]
+  },
+  "412": {
+   "title": "Bakbattahl",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": false,
+   "box": [
+    -1578,
+    119,
+    -1066,
+    631
+   ],
+   "uiArea": 113,
+   "overworld": true,
+   "texBox": [
+    -1577,
+    120,
+    -1065,
+    632
+   ]
+  },
+  "627": {
+   "subregionId": 2459,
+   "title": "The Gracious Hand's Vaults",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.4118,
+   "c": -0.5180787908570775,
+   "f": 0.6231985866317913,
+   "box": [
+    406,
+    -1080,
+    662,
+    -824
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1001
+  },
+  "629": {
+   "subregionId": 2459,
+   "title": "The Gracious Hand's Vaults",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.5174,
+   "c": -0.5237221586244115,
+   "f": 0.6156247623505764,
+   "box": [
+    406,
+    -1080,
+    662,
+    -824
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1001
+  },
+  "628": {
+   "subregionId": 2459,
+   "title": "The Gracious Hand's Vaults",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.4854,
+   "c": -0.517842756463767,
+   "f": 0.6159465965266946,
+   "box": [
+    406,
+    -1080,
+    662,
+    -824
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 1001
+  },
+  "515": {
+   "subregionId": 2460,
+   "title": "Stormwind Cave",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.5659,
+   "c": -0.36039262698879015,
+   "f": 0.6529778099516041,
+   "box": [
+    -687,
+    -749,
+    -175,
+    -237
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1002
+  },
+  "632": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.2617,
+   "c": -0.8675926898295774,
+   "f": 0.7697329247300718,
+   "box": [
+    -495,
+    -1669,
+    17,
+    -1157
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1003
+  },
+  "633": {
+   "subregionId": 2448,
+   "title": "Depleted Ore Deposit",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.2582,
+   "c": -0.7078617785746946,
+   "f": 0.5852225282322788,
+   "box": [
+    -495,
+    -1669,
+    17,
+    -1157
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1003
+  },
+  "634": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.293,
+   "c": -0.8666485522563352,
+   "f": 0.7669009816829985,
+   "box": [
+    -495,
+    -1669,
+    17,
+    -1157
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1003
+  },
+  "635": {
+   "subregionId": 2579,
+   "title": "Seafloor Shrine",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.8477,
+   "c": -0.5771339432685809,
+   "f": 0.855729785690013,
+   "box": [
+    572,
+    1885,
+    828,
+    2141
+   ],
+   "texRange": 256,
+   "texSize": 2048,
+   "uiArea": 2004
+  },
+  "417": {
+   "subregionId": 2478,
+   "title": "Indigent Bedlands",
+   "floorNo": 1,
+   "floorLabel": "2F",
+   "isDungeon": true,
+   "score": 0.5816,
+   "c": -0.8406889873494864,
+   "f": 0.7628133564913673,
+   "box": [
+    1155,
+    -1740,
+    1283,
+    -1612
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3003
+  },
+  "416": {
+   "subregionId": 2478,
+   "title": "Indigent Bedlands",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.5701,
+   "c": -0.8426630931844473,
+   "f": 0.7673616156982359,
+   "box": [
+    1155,
+    -1740,
+    1283,
+    -1612
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3003
+  },
+  "638": {
+   "subregionId": 2479,
+   "title": "Windworn Gully",
+   "floorNo": 0,
+   "floorLabel": "",
+   "isDungeon": true,
+   "score": 0.7457,
+   "c": -0.3076980749758998,
+   "f": 0.845905531367166,
+   "box": [
+    -1830,
+    -1240,
+    -1702,
+    -1112
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3024
+  },
+  "550": {
+   "subregionId": 2466,
+   "title": "Twilight Cave",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.2395,
+   "c": -0.653493165466101,
+   "f": 0.7590216670241072,
+   "box": [
+    -1806,
+    -1772,
+    -1294,
+    -1260
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1007
+  },
+  "566": {
+   "subregionId": 2465,
+   "title": "Darkhorde Cave",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.2363,
+   "c": -0.6656811232297729,
+   "f": 0.7643422703027736,
+   "box": [
+    -1806,
+    -1772,
+    -1294,
+    -1260
+   ],
+   "texRange": 512,
+   "texSize": 4096,
+   "uiArea": 1007
+  },
+  "683": {
+   "subregionId": 2453,
+   "title": "Tomb of Am'Ranna",
+   "floorNo": -3,
+   "floorLabel": "B3F",
+   "isDungeon": true,
+   "score": 0.4383,
+   "c": -0.314754692140913,
+   "f": 1.0561857009737692,
+   "box": [
+    -1847,
+    315,
+    -1719,
+    443
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3116
+  },
+  "684": {
+   "subregionId": 2453,
+   "title": "Tomb of Am'Ranna",
+   "floorNo": -2,
+   "floorLabel": "B2F",
+   "isDungeon": true,
+   "score": 0.457,
+   "c": -0.30986234289774894,
+   "f": 1.053010451263347,
+   "box": [
+    -1847,
+    315,
+    -1719,
+    443
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3116
+  },
+  "685": {
+   "subregionId": 2453,
+   "title": "Tomb of Am'Ranna",
+   "floorNo": -1,
+   "floorLabel": "B1F",
+   "isDungeon": true,
+   "score": 0.3913,
+   "c": -0.3041975174582958,
+   "f": 1.0486337506810184,
+   "box": [
+    -1847,
+    315,
+    -1719,
+    443
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3116
+  },
+  "686": {
+   "subregionId": 2453,
+   "title": "Tomb of Am'Ranna",
+   "floorNo": 0,
+   "floorLabel": "1F",
+   "isDungeon": true,
+   "score": 0.5077,
+   "c": -0.29904767614970207,
+   "f": 1.044514497763113,
+   "box": [
+    -1847,
+    315,
+    -1719,
+    443
+   ],
+   "texRange": 128,
+   "texSize": 1024,
+   "uiArea": 3116
+  }
+ },
+ "overworld": {
+  "box": [
+   -4096,
+   -4096,
+   4096,
+   4096
+  ],
+  "pxPerUnit": 2.0
+ }
+}

@@ -12,10 +12,43 @@
       overflow: hidden;
       background: transparent;
     }
+    /* The map's frame. Fills the screen in icons/map modes; in the windowed F9 mode it is
+       positioned to a box (JS sets left/top/width/height) with a padding RING the webview
+       doesn't cover — the drag bar and resize handles live in that ring, OUTSIDE the webview,
+       so they capture the mouse reliably (a <webview> is its own render surface). */
+    #mapFrame {
+      position: fixed; left: 0; top: 0; width: 100%; height: 100%;
+      box-sizing: border-box;
+    }
+    body.windowed #mapFrame {
+      padding: 22px 10px 10px 10px;
+      border: 1px solid rgba(127, 209, 255, 0.45);
+    }
     webview {
       display: inline-flex; width: 100%; height: 100%; border: none;
       background: transparent;
     }
+
+    /* Move bar + 8 resize handles. Only present (visible + clickable) in the windowed mode
+       while interactive (Alt toggled on). data-dir on each handle names the resize edge. */
+    #mapDrag, .rz {
+      position: absolute; z-index: 12; pointer-events: none; opacity: 0;
+      transition: opacity 90ms ease-out;
+    }
+    body.windowed.interactive #mapDrag,
+    body.windowed.interactive .rz { pointer-events: auto; opacity: 1; }
+    #mapDrag {
+      top: 0; left: 0; right: 0; height: 22px; cursor: move;
+      background: rgba(127, 209, 255, 0.30);
+    }
+    .rz { background: rgba(127, 209, 255, 0.55); }
+    .rz[data-dir="w"]  { left: 0; top: 22px; bottom: 10px; width: 10px; cursor: ew-resize; }
+    .rz[data-dir="e"]  { right: 0; top: 22px; bottom: 10px; width: 10px; cursor: ew-resize; }
+    .rz[data-dir="s"]  { bottom: 0; left: 10px; right: 10px; height: 10px; cursor: ns-resize; }
+    .rz[data-dir="nw"] { left: 0; top: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+    .rz[data-dir="ne"] { right: 0; top: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+    .rz[data-dir="sw"] { left: 0; bottom: 0; width: 16px; height: 16px; cursor: nesw-resize; }
+    .rz[data-dir="se"] { right: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
 
     /* Area readout. The app is guessing about two things it cannot know on its own —
        which building you just walked into, and which floor you're on — and until now
@@ -70,6 +103,23 @@
       transition: opacity 90ms ease-out;
     }
     body.interactive #interactiveCue { opacity: 1; }
+
+    /* MapGenie attribution, pinned to the SCREEN's top-right corner (not the webview, which
+       in windowed mode is confined to the box). mapgenie's own logo inside the page is hidden
+       by hideChrome; this stands in for it. Shown only while the map is up (map/window modes).
+       pointer-events:none — it must never eat a click meant for the game. */
+    #mgLogo {
+      position: fixed; top: 12px; right: 14px; z-index: 11;
+      pointer-events: none;
+      padding: 3px 8px; border-radius: 4px;
+      background: rgb(246, 48, 73); color: #000;   /* mapgenie brand red + black wordmark */
+      font: 700 12px/1.2 "Segoe UI", system-ui, sans-serif;
+      letter-spacing: 0.5px;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.55);
+    }
+    #mgLogo[hidden] { display: none; }
+    #mgLogo b { font-weight: 800; margin-right: 3px; }
+    #mgLogo span { font-weight: 700; }
   </style>
 </head>
 <body>
@@ -77,12 +127,23 @@
        marker. backgroundThrottling=no is load-bearing — the 60fps follow loop
        runs inside this guest, and the overlay is never the focused window, so
        Chromium would otherwise throttle it to ~1fps and freeze the marker. -->
-  <webview
-    id="mapView"
-    src="https://mapgenie.io/dragons-dogma-2/maps/world?embed=light"
-    webpreferences="backgroundThrottling=no"
-    allowpopups
-  ></webview>
+  <div id="mapFrame">
+    <webview
+      id="mapView"
+      src="https://mapgenie.io/dragons-dogma-2/maps/world?embed=light"
+      webpreferences="backgroundThrottling=no"
+      allowpopups
+    ></webview>
+    <!-- Windowed-mode move bar + resize handles (see CSS; shown only when interactive). -->
+    <div id="mapDrag"></div>
+    <div class="rz" data-dir="w"></div>
+    <div class="rz" data-dir="e"></div>
+    <div class="rz" data-dir="s"></div>
+    <div class="rz" data-dir="nw"></div>
+    <div class="rz" data-dir="ne"></div>
+    <div class="rz" data-dir="sw"></div>
+    <div class="rz" data-dir="se"></div>
+  </div>
 
   <!-- Where you are, what's near, and — when the app is only guessing — what to press.
        Hidden until there's something to say (see updateHud in overlay.js). -->
@@ -93,6 +154,10 @@
     <div id="hudDetail"></div>
     <div id="hudAction"></div>
   </div>
+
+  <!-- MapGenie attribution, pinned to the screen corner (see CSS). Shown only while the map
+       is up; stands in for mapgenie's own logo, which hideChrome hides inside the webview. -->
+  <div id="mgLogo" hidden><b>MAP</b> <span>GENIE</span></div>
 
   <div id="interactiveCue"></div>
 

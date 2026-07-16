@@ -259,6 +259,11 @@
         if (!visible) {
           window.map.getStyle().layers.forEach(function(l) {
             if (l.type === 'symbol') return; // POI icons + labels: what we keep
+            // Our OWN layers (the dungeon edge art) are non-symbol rasters, so this
+            // sweep would otherwise hide the very thing we add — and it re-runs on the
+            // styledata event that adding the layer fires, so the edge vanished the
+            // instant it appeared. Never touch a layer we installed.
+            if (l.id.indexOf('__dd2_') === 0) return;
             if (!(l.id in orig)) {
               var v;
               try { v = window.map.getLayoutProperty(l.id, 'visibility'); } catch (e) { /* ignore */ }
@@ -300,6 +305,102 @@
         el.remove();
       }
     }
+
+    // --- Dungeon edge art (overlay F9 map) ---------------------------------
+    // The overlay's "full map" mode draws OUR edge art for the current dungeon floor
+    // instead of mapgenie's raster: the game's own wall/stair linework, baked to a
+    // transparent PNG. It goes in as a Mapbox image source pinned to the floor's four
+    // inset corners (the same lng/lat frame as the player marker), and a raster layer
+    // inserted just BELOW the POI symbol layers so icons and labels stay on top.
+    // Everything off the linework is transparent, so the game shows through — there is
+    // no opacity wash to trade against.
+    //
+    // The PNG arrives as a data: URL, NOT an app-tiles:// URL: Mapbox GL's image-source
+    // loader doesn't go through Electron's protocol.handle, so it cannot fetch our
+    // privileged scheme (added a source, never loaded a pixel, no error). The overlay
+    // reads the bytes over the scheme itself — where fetch works — and inlines them.
+    //
+    // The id (the LocalArea) is kept only to dedup: re-calling with the same id just moves
+    // the corners. Call with corners/imageUrl null to remove the current art.
+    window.__dd2_edge_id__ = null;
+
+    window.__dd2_set_dungeon_edge = function(id, corners, imageUrl) {
+      if (!window.map || typeof window.map.addSource !== 'function') return false;
+      var SRC = '__dd2_edge_src__';
+      var LYR = '__dd2_edge_lyr__';
+      function removeEdge() {
+        try { if (window.map.getLayer(LYR)) window.map.removeLayer(LYR); } catch (e) { /* ignore */ }
+        try { if (window.map.getSource(SRC)) window.map.removeSource(SRC); } catch (e) { /* ignore */ }
+        window.__dd2_edge_id__ = null;
+      }
+      if (id == null || !corners || !imageUrl) { removeEdge(); return true; }
+      // Mapbox image coordinates are [TL, TR, BR, BL] as [lng, lat].
+      var coords = [corners.tl, corners.tr, corners.br, corners.bl];
+      var src = window.map.getSource(SRC);
+      if (src && window.__dd2_edge_id__ === id) {
+        try { src.setCoordinates(coords); } catch (e) { /* ignore */ }
+        return true;
+      }
+      removeEdge();
+      try {
+        window.map.addSource(SRC, { type: 'image', url: imageUrl, coordinates: coords });
+        // Insert below the first symbol layer so POI icons/labels render on top.
+        var before;
+        var layers = window.map.getStyle().layers || [];
+        for (var i = 0; i < layers.length; i++) {
+          if (layers[i].type === 'symbol') { before = layers[i].id; break; }
+        }
+        window.map.addLayer({ id: LYR, type: 'raster', source: SRC,
+          paint: { 'raster-opacity': 1, 'raster-resampling': 'linear', 'raster-fade-duration': 0 } }, before);
+        window.__dd2_edge_id__ = id;
+      } catch (e) { return false; }
+      return true;
+    };
+
+    // --- Overworld edge tiles (overlay F9 map, native 2px) -----------------
+    // The overworld is too big for one image source at native resolution, so it's a GRID of
+    // per-tile edge PNGs and the overlay streams in only the handful around the player. This
+    // syncs the live set: add sources/layers for tiles now wanted, drop the ones that left.
+    // Each tile is its own image source pinned to its four world-box corners (world affine),
+    // as a raster layer below the POI symbols. Ids are __dd2_-prefixed so the basemap
+    // hide-sweep leaves them alone (see applyBasemap). tiles = [{key, corners:{tl,tr,br,bl},
+    // imageUrl}] ; pass [] to clear them all.
+    window.__dd2_world_have__ = window.__dd2_world_have__ || {};
+    window.__dd2_set_world_edge = function(tiles) {
+      if (!window.map || typeof window.map.addSource !== 'function') return false;
+      tiles = tiles || [];
+      var have = window.__dd2_world_have__;
+      var want = {};
+      var i;
+      for (i = 0; i < tiles.length; i++) want[tiles[i].key] = tiles[i];
+
+      // Drop tiles that are no longer wanted.
+      for (var k in have) {
+        if (want[k]) continue;
+        try { if (window.map.getLayer('__dd2_wedge_lyr_' + k)) window.map.removeLayer('__dd2_wedge_lyr_' + k); } catch (e) { /* ignore */ }
+        try { if (window.map.getSource('__dd2_wedge_src_' + k)) window.map.removeSource('__dd2_wedge_src_' + k); } catch (e) { /* ignore */ }
+        delete have[k];
+      }
+
+      // Insert below the first symbol layer so POI icons/labels stay on top.
+      var before;
+      var layers = window.map.getStyle().layers || [];
+      for (i = 0; i < layers.length; i++) { if (layers[i].type === 'symbol') { before = layers[i].id; break; } }
+
+      for (var key in want) {
+        if (have[key]) continue;
+        var t = want[key];
+        if (!t.corners || !t.imageUrl) continue;
+        var coords = [t.corners.tl, t.corners.tr, t.corners.br, t.corners.bl];
+        try {
+          window.map.addSource('__dd2_wedge_src_' + key, { type: 'image', url: t.imageUrl, coordinates: coords });
+          window.map.addLayer({ id: '__dd2_wedge_lyr_' + key, type: 'raster', source: '__dd2_wedge_src_' + key,
+            paint: { 'raster-opacity': 1, 'raster-resampling': 'linear', 'raster-fade-duration': 0 } }, before);
+          have[key] = true;
+        } catch (e) { /* source/layer add raced a restyle; a later sync retries */ }
+      }
+      return true;
+    };
 
     // --- Hide found POIs ---------------------------------------------------
     // mapgenie doesn't put found locations on their own layer — it fades them in
@@ -357,6 +458,71 @@
       return true;
     }
 
+    // --- Current-floor POIs only -------------------------------------------
+    // Inside a dungeon, mapgenie still draws EVERY floor's and every other dungeon's POIs
+    // (all the insets share one map), so the inset you're in is buried under icons for
+    // places you're not. Each POI feature carries its subregion as region_id, and a
+    // floor's subregionId IS that id, so the filter region_id == floor leaves only this
+    // floor's markers. region null (overworld, or a floor we can't name) shows everything.
+    //
+    // The catch: the POI layers already carry a LIVE filter — mapgenie rewrites the
+    // category-visibility 'in' filter every time a category is toggled — so ours can't be
+    // set once. Instead we WRAP map.setFilter (as found-sync wraps dispatch): every filter
+    // mapgenie sets on a POI layer gets our region clause re-appended, so a category toggle
+    // can never drop it. composeFilter() strips any region clause already present first, so
+    // re-applying is idempotent and changing floors just swaps the id.
+    var POI_LAYERS = ['locations', 'location-titles'];
+    if (typeof window.__dd2_poi_region__ !== 'number') window.__dd2_poi_region__ = null;
+
+    function isRegionClause(c) {
+      return Array.isArray(c) && c[0] === '==' && Array.isArray(c[1]) && c[1][0] === 'get' && c[1][1] === 'region_id';
+    }
+    function baseFilter(f) {
+      if (f == null || isRegionClause(f)) return null;
+      if (Array.isArray(f) && f[0] === 'all') {
+        var kept = f.slice(1).filter(function(c) { return !isRegionClause(c); });
+        if (kept.length === 0) return null;
+        if (kept.length === 1) return kept[0];
+        return ['all'].concat(kept);
+      }
+      return f;
+    }
+    function composeFilter(f, region) {
+      var base = baseFilter(f);
+      if (region == null) return base;
+      var clause = ['==', ['get', 'region_id'], region];
+      if (base == null) return clause;
+      return base[0] === 'all' ? base.concat([clause]) : ['all', base, clause];
+    }
+
+    // Wrap setFilter ONCE per map. The guard survives a re-inject (which re-runs this whole
+    // guest) so we never wrap the wrapper; a fresh map after an SPA reload wraps anew.
+    if (window.map && typeof window.map.setFilter === 'function' && !window.map.__dd2_setFilter_wrapped__) {
+      var _dd2OrigSetFilter = window.map.setFilter.bind(window.map);
+      window.map.setFilter = function(layerId, filter, options) {
+        if (POI_LAYERS.indexOf(layerId) !== -1) filter = composeFilter(filter, window.__dd2_poi_region__);
+        return _dd2OrigSetFilter(layerId, filter, options);
+      };
+      window.map.__dd2_setFilter_wrapped__ = true;
+    }
+
+    // Re-derive each POI layer's filter through the wrapper (which composes the current
+    // region). Reading then re-setting rebuilds the base each time, so it's safe whether or
+    // not a clause is already present.
+    function applyPoiFilter() {
+      if (!window.map || typeof window.map.getFilter !== 'function') return false;
+      POI_LAYERS.forEach(function(id) {
+        if (!window.map.getLayer(id)) return;
+        try { window.map.setFilter(id, window.map.getFilter(id)); } catch (e) { /* layer absent; ignore */ }
+      });
+      return true;
+    }
+
+    window.__dd2_set_poi_filter = function(region) {
+      window.__dd2_poi_region__ = (typeof region === 'number') ? region : null;
+      return applyPoiFilter();
+    };
+
     // --- Map brightness ----------------------------------------------------
     // The overlay window composites over the game with STRAIGHT ALPHA — the OS
     // just blends our pixels onto the game's. mapgenie's style is a LIGHT one
@@ -390,13 +556,26 @@
     // <header>/<nav> — it's a plain div with an id — so the tag selectors below never
     // touched it, and those two buttons sat over the game. They belong to the control
     // window, where the chrome is left alone and you can actually click them.
+    //
+    // Hide the whole nav strip INCLUDING mapgenie's logo — in the windowed mode the logo
+    // would be trapped inside the small box, so the overlay draws its own MAP GENIE badge
+    // pinned to the SCREEN's top-right corner instead (see #mgLogo in overlay.html/js).
     function hideChrome() {
       if (document.getElementById('__dd2_chrome_css__')) return;
       var el = document.createElement('style');
       el.id = '__dd2_chrome_css__';
-      el.textContent = '.mapboxgl-control-container,header,nav,footer,aside,#mini-header{display:none !important;}';
+      el.textContent = '.mapboxgl-control-container,header,nav,footer,aside,#mini-header,.map-genie-logo{display:none !important;}';
       document.head.appendChild(el);
     }
+
+    // Windowed F9 mode resizes the <webview> element; tell Mapbox to recompute its size so
+    // the map fills the box (a webview resize also fires the guest's own resize event, but
+    // asserting it here covers any missed edge).
+    window.__dd2_resize = function() {
+      if (window.map && typeof window.map.resize === 'function') {
+        try { window.map.resize(); } catch (e) { /* ignore */ }
+      }
+    };
 
     // --- Zoom --------------------------------------------------------------
     // null = leave zoom alone entirely (the main window's behaviour: the user

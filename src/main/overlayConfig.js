@@ -17,18 +17,19 @@ const DEFAULTS = {
     areaToggle: 'Insert',
     floorUp: 'PageUp',
     floorDown: 'PageDown',
-    // "This interior is that building." Binds the nearest named place — mapgenie's
-    // Locations/Facilities POIs, e.g. "Kough's Inn" — to the doorway you're standing in.
-    // The game's inside-flag fires for every house and shop, and none of them is a
-    // dungeon, so this is the answer far more often than Insert is.
-    rememberPlace: 'Home',
+    // rememberPlace (Home) is unassigned: the pointer names buildings now, so the manual
+    // "this interior is that building" bind is no longer needed. null = bind() skips it.
+    rememberPlace: null,
   },
 
-  // The overlay always comes up ICONS-ONLY: that's the mode you actually play with,
-  // and it shouldn't depend on what you happened to leave it on last time. F9 brings
-  // the map. Re-asserted on every F8-on, not just at startup — see index.js.
-  // Set false to have it open showing the full map instead.
+  // The overlay's INITIAL F9 mode at startup. F9 cycles icons-only -> full map -> windowed
+  // box; F8 now PRESERVES the current mode across on/off (it no longer snaps back here).
+  // true = start icons-only (what you play with); false = start on the full map.
   openIconsOnly: true,
+
+  // The windowed F9 mode's box, as fractions of the screen (resolution-independent). The
+  // overlay converts to pixels; move/resize writes it back here. Default: upper-right.
+  windowRect: { left: 0.63, top: 0.06, width: 0.34, height: 0.46 },
 
   // null = adopt whatever zoom the map is already at on first run, then persist.
   baseZoom: null,

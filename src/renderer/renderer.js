@@ -64,6 +64,7 @@ webview.addEventListener('dom-ready', () => {
 // decide). Everything below then just consumes `areaKey` off the position feed.
 let areas = { insetLinear: null, areas: {} };  // the per-dungeon inset transforms
 let currentArea = null;   // { key, name, floor } from the feed; null = overworld
+let namedOverworld = null; // a town/settlement name the pointer gave with no inset (areaKey null)
 
 function extractAreas(attempt = 0) {
   runInWebview(window.DD2MapAgent.buildExtractAreas()).then((json) => {
@@ -103,13 +104,17 @@ function currentTransform() {
 }
 
 function areaLabel() {
-  if (!currentArea) return 'Overworld';
+  if (!currentArea) {
+    // A town/settlement the pointer named but that rides the overworld transform (areaKey
+    // null): show its name, but it needs no inset — the marker is already right out here.
+    return namedOverworld ? `${namedOverworld} (overworld)` : 'Overworld';
+  }
   const name = `${currentArea.name} ${currentArea.floor}`.trim();
   const rec = areas.areas[currentArea.key];
   const lin = areas.insetLinear;
   if (!lin) return `${name} — no inset scale (is the world map calibrated?)`;
   if (!rec) return `${name} — not placed yet (walk in through its entrance)`;
-  const how = rec.auto ? 'auto' : 'by hand';
+  const how = rec.src === 'game' ? 'from game data' : (rec.auto ? 'auto' : 'by hand');
   return `${name} — ${how}, ${lin.scale ? `${lin.scale.toFixed(2)}x scale` : 'scale set'}`;
 }
 
@@ -550,10 +555,15 @@ window.dd2.onCalibrationClickResult((data) => {
 window.dd2.onGamePosition((data) => {
   lastGamePos = data;
 
-  const areaChanged = (currentArea && currentArea.key) !== data.areaKey;
+  // A named area with no inset key is a town on the overworld; track its name separately so
+  // the label can show it while the marker keeps riding the world transform (null areaKey).
+  const nextNamed = (!data.areaKey && data.areaName) ? data.areaName : null;
+  const areaChanged = (currentArea && currentArea.key) !== data.areaKey
+    || namedOverworld !== nextNamed;
   currentArea = data.areaKey
     ? { key: data.areaKey, name: data.areaName, floor: data.areaFloor }
     : null;
+  namedOverworld = nextNamed;
   if (areaChanged) updateAreaLabel();
 
   let lines =

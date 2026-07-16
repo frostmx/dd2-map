@@ -1,3 +1,12 @@
+// @deprecated for dungeon identification. The primary source is now localAreaReader.js,
+// which reads the game's own current-area record (LocalArea id) from a static pointer
+// chain — exact area+floor in one read, no guessing. This tracker is KEPT and still runs:
+// (1) as the fallback when the pointer can't be read or verified, and (2) always in the
+// OVERWORLD, where it supplies the nearest-dungeon hint/offer. Its floor-learning
+// (PageUp/PageDown), Insert and Home paths are superseded by the shipped LocalArea table
+// (config/localAreas.json) and are retained only for that fallback. See index.js position
+// loop and .map/README.md.
+//
 // Which area is the player in — the overworld, or one floor of one dungeon?
 //
 // mapgenie draws each dungeon as an INSET: a separate, zoomed panel placed off to

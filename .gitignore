@@ -20,6 +20,13 @@ config/view.json
 # solved per-dungeon transforms, which cost real playtime to produce.
 config/mapgenie-areas.json
 
+# The game's own map, pulled out of DD2's paks: the extractor scripts, the two
+# downloaded indexes they need (a 21MB path list, a 42MB RSZ type registry), and
+# ~260MB of extracted Capcom assets. All of it is either downloadable or
+# regenerable from a DD2 install in one command — and the assets are Capcom's, so
+# they must not end up in a commit or in the shipped exe. See .map/README.md.
+.map/
+
 # Byproducts of the reverse-engineering scripts in tools/: memory dumps,
 # pointer-scan results, watch logs. They run from the repo root and write here.
 # Gigabytes of them, and all reproducible — the findings that came out of them

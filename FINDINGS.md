@@ -309,6 +309,29 @@ Consequences, both shipped:
    when nothing is hidden, which is what makes it safe to fire from `styledata`.
    Verified against the live style: with icons-only on, no non-symbol layer leaks
    through, and restoring returns every layer to its exact starting visibility.
+5. **`applyBasemap` must skip OUR OWN layers.** The dungeon edge art (below) is a
+   `raster` layer, i.e. non-symbol, so the "hide every non-symbol layer" sweep hid it
+   too — and because the sweep re-runs on `styledata`, and *adding* the edge layer
+   fires `styledata`, the edge vanished the instant it appeared (`vis=none`, image
+   fully loaded and correctly placed). The fix is one guard: skip any layer whose id
+   starts with `__dd2_`. Cost a full live-diagnostic session to find, because every
+   other signal (source loaded, layer exists, corners in viewport) said success.
+
+### Dungeon edge art (F9 in a dungeon) — data: URL, not a custom scheme
+In a dungeon, F9 replaces mapgenie's raster with OUR baked wall/stair linework
+(`%APPDATA%\dd2-map\edge\<LocalArea>.png`, served over the `app-tiles://` privileged
+scheme). It goes in as a Mapbox `image` source pinned to the floor's four inset corners
+(same transform as the marker) and a `raster` layer inserted below the first symbol
+layer. Two things that cost debugging:
+- **Mapbox GL's `image`-source loader does NOT go through Electron's `protocol.handle`,**
+  so `{type:'image', url:'app-tiles://…'}` adds the source, fetches nothing, and errors
+  nothing — a silent blank. `fetch('app-tiles://…')` DOES honour the scheme (from both the
+  guest and the overlay host), so the overlay fetches the PNG, converts it to a `data:` URL
+  via `FileReader`, caches it per floor, and hands *that* to the guest. A `data:` URL also
+  survives the host→`<webview>` boundary; a `blob:` URL would not (origin-scoped).
+- The edge only shows for a **placeable** dungeon — one with a transform in `areas.areas`.
+  `AREA_TRUST` (0.30) gates game-derived transforms out of the merge, so ~18 low-score
+  dungeons have valid `c`/`f` but no marker and no edge. (Not yet resolved; see TODO.)
 
 ### Found POIs are a paint expression, not a layer (and not filterable)
 mapgenie has no separate layer for locations you've marked found — it fades them

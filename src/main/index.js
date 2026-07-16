@@ -1,5 +1,6 @@
-const { app, BrowserWindow, ipcMain, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, protocol } = require('electron');
 const path = require('node:path');
+const fsp = require('node:fs/promises');
 const { findProcessIdByName, findModuleBase, openProcess, readMemory, resolvePointerChain, closeHandle } = require('./memoryReader');
 const overlayWindow = require('./overlayWindow');
 const overlayConfig = require('./overlayConfig');
@@ -7,11 +8,20 @@ const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
 const { createTracker, floorOf } = require('./areaTracker');
+const { createLocalAreaReader } = require('./localAreaReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
 // freezes. See overlayWindow.js.
 overlayWindow.applyThrottlingSwitches();
+
+// Our own basemap tiles/art (baked from the game's textures into userData) are served to
+// the mapgenie Mapbox instance over this scheme. It must be registered as privileged
+// BEFORE app ready, and needs fetch support so Mapbox's image/raster loader can read it.
+protocol.registerSchemesAsPrivileged([{
+  scheme: 'app-tiles',
+  privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true, stream: true },
+}]);
 
 // Dev-only hot reload: reloads the window when a renderer file changes and
 // relaunches the app when a main-process file changes. Never active in a
@@ -141,8 +151,10 @@ let cfg = null;              // config/overlay.json, with defaults filled in
 let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
 let inputTimer = null;
 let altDown = false;         // last observed Alt state, for edge detection
-// The overlay opens icons-only (see cfg.openIconsOnly); F9 brings the map.
-let baseMapVisible = false;
+let interactiveOn = false;   // Alt is now a TOGGLE (switch), not hold — this is its state
+// The overlay's F9 mode: 'icons' | 'map' | 'window'. F9 cycles; F8 preserves it. Initial
+// value set from cfg.openIconsOnly once cfg is loaded.
+let overlayMode = 'icons';
 let priorForeground = null;  // whose focus we stole, if focusable:true is in use
 
 // A resolved global read is trustworthy only if it sits on the 128-grid relative
@@ -173,6 +185,38 @@ const tracker = createTracker();
 let areas = areaStore.empty();       // insetLinear + the per-dungeon translations
 let areaMeta = null;                 // mapgenie's region/portal graph
 let lastAreaKey = null;              // for edge detection on the broadcast
+
+// PRIMARY area source: read the game's own current-area record (LocalArea id) from a
+// static pointer chain, instead of guessing from position. `localAreas` is the shipped
+// table (LocalArea -> subregion, floor, name, inset transform); `localAreaReader` resolves
+// the chain each tick. Both null if config is missing -> we fall back to `tracker` alone.
+// See localAreaReader.js and .map/README.md.
+let localAreas = null;
+let localAreaReader = null;
+const AREA_TRUST = 0.30;             // min match score to trust a solved inset transform
+// Whether the baked overworld edge map (userData/edge/world.png) exists. Set at boot. When
+// true, the overlay's F9 draws OUR world edge art (id -1) over the whole world box instead
+// of mapgenie's raster; when false, the pointer reads -1 but we leave mapgenie's raster up
+// (hiding it with nothing baked would blank the map).
+let hasWorldEdge = false;
+// LocalArea ids that have a baked <id>.png in userData/edge/. Filled at boot by scanning the
+// dir. Used to decide whether a TOWN (overworld:true) can show its own detailed edge map
+// (bakeTownEdges.py, placed at the solved texBox) vs falling back to the world edge.
+const bakedEdgeIds = new Set();
+
+// Fold the shipped LocalArea transforms into the `areas` state the renderers consume, so
+// forArea(cal, areas, String(localArea)) resolves them. Only trustworthy placements get a
+// transform; a low-score dungeon still gets its NAME (from the pointer) but no transform,
+// so forArea returns null and the marker is held rather than drawn confidently wrong.
+function mergeLocalAreas() {
+  if (!localAreas) return;
+  if (!areas.insetLinear && localAreas.insetLinear) areas.insetLinear = localAreas.insetLinear;
+  for (const [la, v] of Object.entries(localAreas.byLocalArea || {})) {
+    if (v.score >= AREA_TRUST && typeof v.c === 'number' && typeof v.f === 'number') {
+      areas.areas[la] = { c: v.c, f: v.f, name: v.title, floor: v.floorLabel || '', src: 'game' };
+    }
+  }
+}
 
 function pushAreas() {
   tracker.setHeights(areas.floorHeights);   // where each floor sits, in game units
@@ -221,7 +265,7 @@ function describeHint(h) {
   // "It's a building, and it's called X" — offered whenever we have a named place near
   // enough to be the room you're standing in. This is the answer far more often than
   // "it's a dungeon" is: the game has a hundred houses and inns for every cave.
-  const remember = (h.place && h.place.reachable)
+  const remember = (keys.rememberPlace && h.place && h.place.reachable)
     ? `${keys.rememberPlace} — remember this as ${h.place.title} (${h.place.category})`
     : null;
   const nearestPlace = h.place
@@ -521,15 +565,78 @@ function startMemoryPolling() {
       absorbAnchor();
       absorbHeight();
       absorbFloorAnchor();
-      const areaKey = area ? area.key : null;
+
+      // PRIMARY area source: the game's own current-area record. When it names a
+      // dungeon/interior (localArea >= 0) it overrides the tracker's guess for both the
+      // NAME and the transform key. When it reads overworld (-1) or can't be trusted this
+      // tick, we keep the tracker's answer -- which still runs the nearest-dungeon offer.
+      let areaKey = area ? area.key : null;
+      let areaName = area ? area.name : null;
+      let areaFloor = area ? area.floor : null;
+      let areaSource = tracker.reason() || 'startup';
+      // For the overlay's F9 edge art: the current dungeon floor's id + world box, set
+      // only when the pointer names a DUNGEON floor we have a trustworthy transform for
+      // (a baked edge PNG exists at userData/edge/<id>.png). The overlay turns the box
+      // into inset corners via the same transform as the marker.
+      let edgeLocalArea = null;
+      let edgeBox = null;
+      // mapgenie's subregion id for the current dungeon floor, or null. The overlay filters
+      // the POI layers to it so only THIS floor's icons show (each POI's region_id is its
+      // subregion). Set for any dungeon floor the pointer names, placeable or not.
+      let subregionId = null;
+      const la = localAreaReader ? localAreaReader.read() : null;
+      if (la && la.localArea >= 0) {
+        const entry = localAreas.byLocalArea[String(la.localArea)];
+        if (entry) {
+          areaName = entry.title;
+          areaFloor = entry.floorLabel || '';
+          areaSource = 'pointer';
+          // A TOWN_ area (overworld:true) is a settlement, not a dungeon: mapgenie draws no
+          // inset for it, and DD2 reports true world coords indoors, so the marker must ride
+          // the world affine. areaKey stays null (forArea returns worldCal for null) and we
+          // only take the NAME. Naming it after a dungeon inset is exactly the bug that made
+          // Vernworth read as "Waterfall Cave" -- see .map/nameTowns.py.
+          if (!entry.overworld) {
+            areaKey = String(la.localArea);   // forArea places it if areas.areas[key] exists
+            if (entry.isDungeon && typeof entry.subregionId === 'number') subregionId = entry.subregionId;
+            if (entry.isDungeon && areas.areas[areaKey]) {
+              edgeLocalArea = la.localArea;
+              edgeBox = entry.box;
+            }
+          } else if (bakedEdgeIds.has(la.localArea)) {
+            // A town with its OWN detailed edge map (bakeTownEdges.py): the game's town-plan
+            // texture, pinned at the SOLVED world box (texBox — a town texture has margins, so
+            // its game box isn't its art extent) and placed by the world affine (areaKey null,
+            // forArea returns worldCal), so the marker rides the same frame.
+            edgeLocalArea = la.localArea;
+            edgeBox = entry.texBox || entry.box;
+          } else if (hasWorldEdge && localAreas.overworld) {
+            // No detailed town map baked (or low-confidence solve): fall back to the open
+            // overworld's world edge — the town's streets are on it too, just at lower detail.
+            edgeLocalArea = -1;
+            edgeBox = localAreas.overworld.box;
+          }
+        }
+      } else if (la && la.localArea === -1 && hasWorldEdge && localAreas.overworld) {
+        // Overworld: the F9 map is our own world edge art, pinned to the whole world box
+        // and placed by the world affine (forArea returns it for a null areaKey). Sentinel
+        // id -1 reuses the single dungeon-edge slot; areaKey stays null so the marker still
+        // rides the world transform.
+        edgeLocalArea = -1;
+        edgeBox = localAreas.overworld.box;
+      }
       if (areaKey !== lastAreaKey) {
         lastAreaKey = areaKey;
-        const where = area ? `${area.name} ${area.floor}`.trim() : 'overworld';
-        console.log(`[areas] now in: ${where}  <- ${tracker.reason() || 'startup'}`);
+        const where = areaName ? `${areaName} ${areaFloor}`.trim() : 'overworld';
+        console.log(`[areas] now in: ${where}  <- ${areaSource}`);
       }
 
       // The guesses we DIDN'T make. Logged on change only — it's a 30Hz loop.
-      const hint = describeHint(tracker.hint());
+      // Suppressed entirely once the pointer has named the area: the "inside but what /
+      // nearest entrance / Insert to confirm" prompts are the OLD guessing path, and
+      // showing them next to a definite pointer answer is just confusing noise.
+      const pointerResolved = areaSource === 'pointer';
+      const hint = pointerResolved ? null : describeHint(tracker.hint());
       const hintId = hint ? `${hint.code}|${hint.title}` : null;
       if (hintId !== lastHintId) {
         lastHintId = hintId;
@@ -548,9 +655,12 @@ function startMemoryPolling() {
         localY,
         facing,                 // unit vector in GAME coords, or null (see CAMERA_*)
         areaKey,
-        areaName: area ? area.name : null,
-        areaFloor: area ? area.floor : null,
-        near: tracker.near(),   // nearest doorway + distance, for the readout
+        areaName,
+        areaFloor,
+        edgeLocalArea,          // dungeon floor id for the overlay's F9 edge art, or null
+        edgeBox,                // its world box [x0,z0,x1,z1], for computing inset corners
+        subregionId,            // mapgenie subregion for POI filtering (this floor only), or null
+        near: pointerResolved ? null : tracker.near(),   // nearest doorway; hidden once the pointer knows
         inside: insideFlag !== 0,   // the game's own flag: a dungeon OR any building
         // The named building you're standing in, if you've taught us this doorway (Home).
         // Moves nothing — indoors the game still reports true world coords, so the marker
@@ -757,21 +867,27 @@ function registerHotkeys() {
   bind(cfg.hotkeys.toggle, 'overlay on/off', () => {
     const enabled = overlayWindow.toggle();
     if (enabled) {
-      // Assert the opening mode on every F8-on, not just at startup. Otherwise the
-      // mode is sticky: look something up on the full map, hide the overlay, bring
-      // it back mid-fight, and you get a full map over your face. Icons-only is the
-      // mode you play with; the map is a deliberate F9 away.
-      baseMapVisible = !cfg.openIconsOnly;
-      overlayWindow.send('overlay:basemap', baseMapVisible);
+      // PRESERVE the current F9 mode across on/off (the user asked for this): just re-assert
+      // whatever mode was last selected, rather than snapping back to icons-only.
+      overlayWindow.send('overlay:mode', overlayMode);
+    } else {
+      // Coming back should never be stuck interactive; clear the Alt toggle on hide.
+      if (interactiveOn) {
+        interactiveOn = false;
+        overlayWindow.setInteractive(false);
+        overlayWindow.send('overlay:interactive', false);
+      }
     }
     if (cfg.hideMainWindowWithOverlay && mainWindow && !mainWindow.isDestroyed()) {
       if (enabled) mainWindow.hide(); else mainWindow.show();
     }
   });
 
-  bind(cfg.hotkeys.baseMap, 'base map on/off (icons-only)', () => {
-    baseMapVisible = !baseMapVisible;
-    overlayWindow.send('overlay:basemap', baseMapVisible);
+  // F9 cycles the three modes: icons-only -> full map -> windowed box -> icons-only.
+  bind(cfg.hotkeys.baseMap, 'cycle map mode (icons/map/window)', () => {
+    const order = ['icons', 'map', 'window'];
+    overlayMode = order[(order.indexOf(overlayMode) + 1) % order.length];
+    overlayWindow.send('overlay:mode', overlayMode);
   });
 
   bind(cfg.hotkeys.zoomOut, 'zoom out', () => {
@@ -798,13 +914,13 @@ function registerHotkeys() {
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
   bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));
-  // The far commoner answer to "what did I just walk into": not a dungeon, a building.
+  // rememberPlace (Home) is unassigned now — bind() skips a null accelerator.
   bind(cfg.hotkeys.rememberPlace, 'remember this building', rememberPlace);
   bind(cfg.hotkeys.floorUp, 'floor up', () => announce(tracker.stepFloor(1)));
   bind(cfg.hotkeys.floorDown, 'floor down', () => announce(tracker.stepFloor(-1)));
 }
 
-// Alt-hold (mouse capture) and game-focus follow. Both have to be POLLED:
+// Alt (mouse capture, now a TOGGLE) and game-focus follow. Both have to be POLLED:
 // globalShortcut only ever fires on key press, so it cannot tell us when Alt is
 // released, and there's no event for "the foreground window changed".
 function startInputPolling() {
@@ -812,11 +928,13 @@ function startInputPolling() {
     try {
       const alt = win32Input.isAltDown();
 
-      // Edge, not level: only act when Alt actually changes state.
-      if (alt !== altDown) {
-        altDown = alt;
-        overlayWindow.setInteractive(alt);
-        overlayWindow.send('overlay:interactive', alt);
+      // Alt is a SWITCH, not hold: flip the interactive state on each Alt PRESS (rising
+      // edge). One press captures the mouse (click POIs, move/resize the windowed box);
+      // press again to hand control back to the game.
+      if (alt && !altDown) {
+        interactiveOn = !interactiveOn;
+        overlayWindow.setInteractive(interactiveOn);
+        overlayWindow.send('overlay:interactive', interactiveOn);
 
         // DD2 pins the cursor to screen centre with ClipCursor and only lets go
         // when it loses focus, so a merely click-receiving overlay isn't enough —
@@ -826,7 +944,7 @@ function startInputPolling() {
         // last input event (DD2 did), so the call is silently ignored. Hence
         // forceForeground, which lifts that restriction via AttachThreadInput.
         if (cfg.focusable !== false && overlayWindow.isEnabled()) {
-          if (alt) {
+          if (interactiveOn) {
             priorForeground = win32Input.foregroundWindow();
             overlayWindow.focus();
             win32Input.forceForeground(overlayWindow.getHwnd());
@@ -836,12 +954,12 @@ function startInputPolling() {
           }
         }
       }
+      altDown = alt;
 
-      // Held, not just on the edge: DD2 re-applies its ClipCursor every frame for
-      // as long as it thinks it owns the mouse, so clearing it once on Alt-down
-      // doesn't stick. The clip is system-wide state, so we can just keep clearing
-      // it while Alt is held.
-      if (alt && cfg.focusable !== false && overlayWindow.isEnabled()) {
+      // Level, not edge: DD2 re-applies its ClipCursor every frame for as long as it
+      // thinks it owns the mouse, so clearing it once on toggle-on doesn't stick. The clip
+      // is system-wide state, so keep clearing it the whole time we're interactive.
+      if (interactiveOn && cfg.focusable !== false && overlayWindow.isEnabled()) {
         win32Input.releaseCursorClip();
       }
 
@@ -851,9 +969,9 @@ function startInputPolling() {
       const ourWindowIsUp = fg === process.pid;  // any of our own windows
       const gameIsUp = gamePid != null && fg === gamePid;
 
-      // Never hide while Alt is held or while one of our windows has focus — an
-      // Alt-click on the overlay would otherwise make it vanish under the cursor.
-      if (gameIsUp || ourWindowIsUp || alt) overlayWindow.show();
+      // Never hide while we're interactive or while one of our windows has focus — a
+      // click on the overlay would otherwise make it vanish under the cursor.
+      if (gameIsUp || ourWindowIsUp || interactiveOn) overlayWindow.show();
       else overlayWindow.hide();
     } catch {
       // A transient user32 failure shouldn't kill the loop.
@@ -890,6 +1008,14 @@ ipcMain.handle('overlay:config:save', (_event, data) => {
   cfg = { ...cfg, ...data };
   overlayConfig.save(cfg);
   return true;
+});
+
+// The overlay window (windowed F9 mode) was moved/resized; persist the box as screen
+// fractions so it's remembered and survives a resolution change.
+ipcMain.on('overlay:save-window-rect', (_event, rect) => {
+  if (!rect || typeof rect.width !== 'number') return;
+  cfg = { ...cfg, windowRect: rect };
+  overlayConfig.save(cfg);
 });
 
 ipcMain.on('overlay:probe', (_event, info) => {
@@ -1002,11 +1128,48 @@ ipcMain.handle('view:save', (_event, data) => {
 
 app.whenReady().then(() => {
   cfg = overlayConfig.load();
+  // Initial F9 mode. F8 preserves it thereafter; F9 cycles it.
+  overlayMode = cfg.openIconsOnly === false ? 'map' : 'icons';
+
+  // Serve baked edge art from userData/edge/ over app-tiles://. The dungeon-floor PNGs
+  // (LocalArea id -> <id>.png) are generated from the user's own game files, never
+  // shipped. A request outside the edge dir (path traversal) is refused.
+  const edgeDir = path.join(app.getPath('userData'), 'edge');
+  fsp.access(path.join(edgeDir, 'world.png')).then(() => { hasWorldEdge = true; }).catch(() => {});
+  fsp.readdir(edgeDir).then((files) => {
+    for (const fn of files) {
+      const m = /^(\d+)\.png$/.exec(fn);
+      if (m) bakedEdgeIds.add(Number(m[1]));
+    }
+  }).catch(() => {});
+  protocol.handle('app-tiles', async (request) => {
+    const rel = decodeURIComponent(new URL(request.url).pathname).replace(/^\/+/, '');
+    const target = path.normalize(path.join(edgeDir, rel));
+    if (!target.startsWith(edgeDir)) return new Response('forbidden', { status: 403 });
+    try {
+      const buf = await fsp.readFile(target);
+      return new Response(buf, { headers: { 'content-type': 'image/png', 'cache-control': 'no-cache' } });
+    } catch {
+      return new Response('not found', { status: 404 });
+    }
+  });
 
   // Areas: the saved per-dungeon transforms, the world affine the doorways are
   // derived from, and the cached portal graph. The cache means the doorways are live
   // from the first tick, before the mapgenie guest has even finished loading.
   areas = areaStore.load();
+  // The game-derived area table + pointer chains (shipped, universal). If either is
+  // missing the reader stays null and we run on the old tracker alone.
+  localAreas = configStore.load('localAreas');
+  const chainCfg = configStore.load('dd2.localarea');
+  if (localAreas && chainCfg) {
+    mergeLocalAreas();
+    try {
+      localAreaReader = createLocalAreaReader(chainCfg, localAreas);
+    } catch (err) {
+      console.log(`[areas] pointer reader disabled: ${err.message}`);
+    }
+  }
   tracker.setHeights(areas.floorHeights);
   tracker.setEnterRadius(cfg.dungeonEnterRadius);  // how near a doorway "inside" must be
   tracker.setPlaceRadius(cfg.placeRadius);         // ...and how big a building is
@@ -1040,6 +1203,7 @@ app.on('before-quit', () => {
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (readerHandle) { closeHandle(readerHandle); readerHandle = null; }
+  if (localAreaReader) { localAreaReader.detach(); }
 });
 
 app.on('window-all-closed', () => {
