@@ -13,6 +13,7 @@ const timeReader = require('./timeReader');
 const cameraFrameReader = require('./cameraFrameReader');
 const generateManagerReader = require('./generateManagerReader');
 const contextDbReader = require('./contextDbReader');
+const gimmickReader = require('./gimmickReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -538,20 +539,27 @@ function startMemoryPolling() {
   // Which AR collectibles are already picked up: its own slow loop, decoupled from both
   // feeds above. Collected-state changes at most a few times a session, so this only
   // reads and only sends when the GUID set actually changed — same broadcast/onCommand
-  // channel as camera-frame. Two sources, unioned into one GUID set (the overlay filters
-  // arPois by guid regardless of kind), both GLOBAL/persistent (near or far, survive reload):
+  // channel as camera-frame. Sources unioned into one GUID set (the overlay filters arPois
+  // by guid regardless of kind):
   //   - Seeker's Tokens: the _NeverGenetateID HashSet (generateManagerReader).
-  //   - Golden Trove Beetles: the save-wide ContextDB (contextDbReader), intersected with
-  //     the known beetle GUIDs. NOT the live gimmick — a collected beetle doesn't respawn
-  //     one, so only the ContextDB knows (see contextDbReader.js / FINDINGS.md).
+  //   - Golden Trove Beetles, PERSISTENT: the save-wide ContextDB (contextDbReader),
+  //     intersected with the known beetle GUIDs — covers everything after a save/reload.
+  //   - Golden Trove Beetles, IN-SESSION: the live gimmick flag (gimmickReader) — the
+  //     ContextDB is the *save* DB and lags until you save, so this catches a beetle you
+  //     just gathered (still loaded, near you) in the meantime. See the two readers' headers.
   collectedTimer = setInterval(() => {
     if (!readerHandle) return;
     const tokens = generateManagerReader.read(readerHandle, moduleBase);
     if (!tokens) return; // the token read is the required baseline; skip the tick if it fails
     const guids = new Set(tokens);
     if (arBeetleGuids.size) {
-      const beetles = contextDbReader.read(readerHandle, moduleBase, arBeetleGuids);
-      if (beetles) for (const g of beetles) guids.add(g);
+      const persistent = contextDbReader.read(readerHandle, moduleBase, arBeetleGuids);
+      if (persistent) for (const g of persistent) guids.add(g);
+    }
+    if (frameOffsets && arBeetlePois.length) {
+      const live = gimmickReader.read(
+        readerHandle, moduleBase, { x: frameOffsets.x, y: frameOffsets.y }, arBeetlePois);
+      if (live) for (const g of live) guids.add(g);
     }
     if (lastCollectedGuids && guids.size === lastCollectedGuids.size
       && [...guids].every((g) => lastCollectedGuids.has(g))) return; // unchanged
@@ -1209,10 +1217,14 @@ function loadArPoiFile(file, kind) {
 }
 ipcMain.handle('ar:pois:load', () => AR_POI_FILES.flatMap(({ file, kind }) => loadArPoiFile(file, kind)));
 
-// Beetle GUIDs kept main-side too: contextDbReader intersects the ContextDB's collected
-// set against these (lowercase), so only known beetles come back — the almanac's other
-// kinds never do. Same idea as the token filter's implicit intersection.
-const arBeetleGuids = new Set(loadArPoiFile('161.json', 'beetle').map((p) => p.guid.toLowerCase()));
+// Beetle data kept main-side for the two beetle readers:
+//   - arBeetleGuids: lowercase GUID set — contextDbReader intersects the ContextDB's
+//     collected set against these, so only known beetles come back (the DB holds every
+//     gatherable). Same idea as the token filter's implicit intersection.
+//   - arBeetlePois: {guid, x, y=engine-z} — gimmickReader needs positions to bridge a
+//     nearby loaded beetle gimmick back to its almanac GUID (the in-session read).
+const arBeetlePois = loadArPoiFile('161.json', 'beetle').map((p) => ({ guid: p.guid, x: p.x, y: p.y }));
+const arBeetleGuids = new Set(arBeetlePois.map((p) => p.guid.toLowerCase()));
 
 // Seeds the shared inset scale/rotation from a 3-point calibration run inside one
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then

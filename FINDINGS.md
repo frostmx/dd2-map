@@ -1414,24 +1414,34 @@ the last-broadcast set and only sends `collected-tokens` (same generic
 loop — `arPois` itself is never re-fetched, so a collectible picked up mid-session drops
 out without needing a reload. (The same timer now also unions in collected beetles.)
 
-### Golden Trove Beetle collected-state — SHIPPED (`src/main/contextDbReader.js`, 2026-07-17)
+### Golden Trove Beetle collected-state — SHIPPED (ContextDB + live gimmick, 2026-07-17)
 
-Beetles are the second AR collectible, and their collected-state comes from the game's
-**persistent, save-wide ContextDB** — global like tokens' `_NeverGenetateID`, not the live
-world. `config/singletons.json` `beetleContextChain` has every offset.
+Beetles are the second AR collectible. Their collected-state needs **two** reads unioned,
+because neither alone is complete — a subtle but important split:
 
-**Why not the live beetle gimmick (a dead end worth recording).** The first attempt read
-a per-gimmick flag off the loaded beetle object (`app.Gm82_009`, found in
-`GimmickManager.ManagedGimmicks`, matched to an almanac GUID by world position; a gather
-flips a cluster of bytes incl. `+0x3e4`). It worked *in the moment you gathered a beetle*
-— and then failed the real test: **a collected beetle does not respawn a gimmick.** Reload
-a save and a gathered beetle simply isn't created in the world, so there is no object to
-read a flag off, and its marker draws forever. A live-gimmick signal can only ever hide
-beetles you're standing next to *and haven't collected yet* — useless for a finder. The
-lesson: collected-state that must survive reload lives in the save/ContextDB, never on a
-streamed gimmick. (Two false starts along the way: a light/timer float at `+0x3f8` that
-self-drifts with the day/night clock, and a co-located *lantern* gimmick of a different
-type — both dodged by diffing a **0-drift alive baseline** of the exact object.)
+- **Persistent (`src/main/contextDbReader.js`)** — the save-wide **ContextDB**, global like
+  tokens' `_NeverGenetateID`. But the ContextDB is the *save* database: `GatherContext`'s
+  byte only flips to collected when the game **writes the save**, so it *lags* an in-session
+  gather until you save. It's authoritative after any save/reload.
+- **In-session (`src/main/gimmickReader.js`)** — the **live gimmick** flag, which flips the
+  *instant* you gather, while the beetle's gimmick is still loaded (you're standing on it).
+  It covers the window between gathering and saving that the ContextDB misses.
+
+Union them and a gathered beetle's marker disappears immediately **and** stays gone across
+reloads. `config/singletons.json` has both `beetleContextChain` and `beetleGimmickChain`.
+
+**Why the ContextDB is unavoidable (not just the gimmick).** A **collected beetle does not
+respawn a gimmick at all** — reload a save and a gathered beetle simply isn't created in the
+world, so there's no object to read a flag off. The live-gimmick read can therefore only
+ever see beetles you're near *this session*; anything collected in a past session is invisible
+to it. That's exactly what the ContextDB supplies. (Symmetric gotcha the other way: the
+ContextDB lags until save — hence the union.) Two false starts while finding the gimmick
+flag: a light/timer float at `+0x3f8` that self-drifts with the day/night clock, and a
+co-located *lantern* gimmick of a different type — both dodged by diffing a **0-drift alive
+baseline** of the exact object. The gimmick flag itself is byte `+0x3e4` (one of 7 that flip
+together on gather); the beetle gimmick type is `app.Gm82_009` (`Gm82_080` is the almanac's
+data-group id), matched to an almanac GUID by world position (`gimmick +0x10` GameObject →
+`+0x18` Transform → `+0x80` worldMatrix `+0x30` pos, plus the cell-local→global frame offset).
 
 **The ContextDB walk** mirrors what `gibbed_Almanac.lua` does with managed calls, done
 out-of-process (fetched the mod to get the chain right). `app.ContextDBMS` is a resolved
@@ -1459,12 +1469,13 @@ uncollected. Validated end-to-end against a real save: **42 of 78 collected, 19 
 17 not-in-DB**, tracking the live save state as beetles are gathered/reloaded — with no
 gimmick loaded.
 
-**Wiring:** `collectedTimer` calls `contextDbReader.read(handle, moduleBase, arBeetleGuids)`
-and unions the collected beetle GUIDs into the token set before the diff/broadcast — one
-`collected-tokens` message carries both, the overlay filters `arPois` by GUID regardless of
-kind. `arBeetleGuids` (main-side) is just the known beetle GUID set, used to intersect the
-ContextDB result down to beetles (the DB holds every gatherable). No position or frame
-offset needed — the state is global.
+**Wiring:** `collectedTimer` unions three reads into one GUID set before the diff/broadcast
+— tokens (`generateManagerReader`), persistent beetles (`contextDbReader.read(handle,
+moduleBase, arBeetleGuids)`), and in-session beetles (`gimmickReader.read(handle, moduleBase,
+frameOffset, arBeetlePois)`). One `collected-tokens` message carries all of it; the overlay
+filters `arPois` by GUID regardless of kind. Main-side, `arBeetleGuids` (GUID set) intersects
+the ContextDB result down to beetles (the DB holds every gatherable), and `arBeetlePois`
+(positions) lets the gimmick read bridge a nearby loaded beetle back to its almanac GUID.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
