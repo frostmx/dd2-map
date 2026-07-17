@@ -43,16 +43,13 @@ function config() {
     cfgLoaded = true;
     const raw = store.load('singletons');
     const dbms = raw && raw.types && raw.types['app.ContextDBMS'];
-    const gather = raw && raw.types && raw.types['app.GatherContext'];
-    if (raw && dbms && typeof dbms.holderTypeIndex === 'number' && dbms.instanceSlot != null
-      && gather && typeof gather.typeIndex === 'number') {
+    if (raw && dbms && typeof dbms.holderTypeIndex === 'number' && dbms.instanceSlot != null) {
       cfg = {
         vmGlobalRva: BigInt(raw.vmGlobalRva),
         staticTblOffset: BigInt(raw.staticTblOffsetInVm),
         tdbOffset: BigInt(raw.tdbOffsetInVm),
         holderTypeIndex: dbms.holderTypeIndex,
         instanceSlot: BigInt(dbms.instanceSlot),
-        gatherTypeIndex: BigInt(gather.typeIndex),
       };
     }
   }
@@ -68,22 +65,32 @@ function guidToString(buf, off) {
   return `${d1}-${d2}-${d3}-${d4a}-${d4b}`;
 }
 
-// -> Set<string> of collected GUIDs among `wantGuids` (a Set of lowercase GUID strings),
-// or null. Never throws. Beetles absent from the DB are simply not in the returned set.
-function read(handle, moduleBase, wantGuids) {
+// Collected GUIDs across one or more collectible specs, in a single UniqueID2Keys walk.
+// Each spec = { guids: Set<string lowercase>, contextTypeIndex: number, flagOffset: number,
+//               collectedValue: number } — different collectibles keep their state in a
+// different context type inside the same record (GatherContext for beetles, GmItemContext
+// for chests) and read a byte flag at a type-specific offset/value (beetle +0x28==0,
+// chest +0x19==1). -> Set<string> of collected GUIDs, or null. Never throws.
+function read(handle, moduleBase, specs) {
   const c = config();
-  if (!c || !handle || moduleBase == null || !wantGuids || !wantGuids.size) return null;
+  if (!c || !handle || moduleBase == null || !specs || !specs.length) return null;
   try {
     const vm = readPointer(handle, moduleBase + c.vmGlobalRva);
     if (vm === 0n) return null;
 
-    // Resolve app.GatherContext's managed_vt live from the TDB (types[] @ tdb+0x60).
+    // Resolve each spec's context managed_vt live from the TDB (types[] @ tdb+0x60).
     const tdb = readPointer(handle, vm + c.tdbOffset);
     if (tdb === 0n) return null;
     const typesPtr = readPointer(handle, tdb + 0x60n);
     if (typesPtr === 0n) return null;
-    const gatherVt = readPointer(handle, typesPtr + c.gatherTypeIndex * TYPE_ENTRY_SIZE + 0x40n);
-    if (gatherVt === 0n) return null;
+    const resolved = [];
+    for (const s of specs) {
+      if (!s.guids || !s.guids.size) continue;
+      const vt = readPointer(handle, typesPtr + BigInt(s.contextTypeIndex) * TYPE_ENTRY_SIZE + 0x40n);
+      if (vt === 0n) return null;
+      resolved.push({ ...s, vt, flagOffset: BigInt(s.flagOffset) });
+    }
+    if (!resolved.length) return new Set();
 
     // ContextDBMS singleton -> OfflineDB -> IndexCreator + Records.
     const elements = readPointer(handle, vm + c.staticTblOffset);
@@ -98,7 +105,7 @@ function read(handle, moduleBase, wantGuids) {
     const records = readPointer(handle, db + FB + 0x08n);
     if (indexCreator === 0n || records === 0n) return null;
 
-    // UniqueID2Keys dictionary -> build the entries we care about.
+    // UniqueID2Keys dictionary -> walk once.
     const dict = readPointer(handle, indexCreator + FB + 0x00n);
     if (dict === 0n) return null;
     const entriesArr = readPointer(handle, dict + FB + 0x08n);
@@ -120,7 +127,8 @@ function read(handle, moduleBase, wantGuids) {
       let kb;
       try { kb = readMemory(handle, keyPtr + FB, 16); } catch { continue; }
       const guid = guidToString(kb, 0);
-      if (!wantGuids.has(guid)) continue;                 // not a beetle we care about
+      const spec = resolved.find((s) => s.guids.has(guid));
+      if (!spec) continue;                                // not a collectible we care about
 
       // value -> ContextDatabaseKey.KeyForSystem -> Records[i] -> Record -> Contexts.
       const dbKey = entries.readBigUInt64LE(o + 0x10);
@@ -142,9 +150,9 @@ function read(handle, moduleBase, wantGuids) {
         if (ctx === 0n) continue;
         let head;
         try { head = readMemory(handle, ctx, 8); } catch { continue; }
-        if (head.readBigUInt64LE(0) !== gatherVt) continue;      // not the GatherContext
-        const flag = readMemory(handle, ctx + 0x28n, 1).readUInt8(0);
-        if (flag === 0) collected.add(guid);                     // 0 = collected
+        if (head.readBigUInt64LE(0) !== spec.vt) continue;   // not this spec's context type
+        const flag = readMemory(handle, ctx + spec.flagOffset, 1).readUInt8(0);
+        if (flag === spec.collectedValue) collected.add(guid);
         break;
       }
     }

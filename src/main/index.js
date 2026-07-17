@@ -542,23 +542,23 @@ function startMemoryPolling() {
   // channel as camera-frame. Sources unioned into one GUID set (the overlay filters arPois
   // by guid regardless of kind):
   //   - Seeker's Tokens: the _NeverGenetateID HashSet (generateManagerReader).
-  //   - Golden Trove Beetles, PERSISTENT: the save-wide ContextDB (contextDbReader),
-  //     intersected with the known beetle GUIDs — covers everything after a save/reload.
-  //   - Golden Trove Beetles, IN-SESSION: the live gimmick flag (gimmickReader) — the
-  //     ContextDB is the *save* DB and lags until you save, so this catches a beetle you
-  //     just gathered (still loaded, near you) in the meantime. See the two readers' headers.
+  //   - Beetles + Chests, PERSISTENT: the save-wide ContextDB (contextDbReader, one walk
+  //     over both specs) — covers everything after a save/reload, near or far.
+  //   - Beetles + Chests, IN-SESSION: the live gimmick flag (gimmickReader) — the ContextDB
+  //     is the *save* DB and lags until you save, so this catches something you just took
+  //     (still loaded, near you) in the meantime. See the two readers' headers.
   collectedTimer = setInterval(() => {
     if (!readerHandle) return;
     const tokens = generateManagerReader.read(readerHandle, moduleBase);
     if (!tokens) return; // the token read is the required baseline; skip the tick if it fails
     const guids = new Set(tokens);
-    if (arBeetleGuids.size) {
-      const persistent = contextDbReader.read(readerHandle, moduleBase, arBeetleGuids);
+    if (contextSpecs.length) {
+      const persistent = contextDbReader.read(readerHandle, moduleBase, contextSpecs);
       if (persistent) for (const g of persistent) guids.add(g);
     }
-    if (frameOffsets && arBeetlePois.length) {
+    if (frameOffsets) {
       const live = gimmickReader.read(
-        readerHandle, moduleBase, { x: frameOffsets.x, y: frameOffsets.y }, arBeetlePois);
+        readerHandle, moduleBase, { x: frameOffsets.x, y: frameOffsets.y }, gimmickSpecs);
       if (live) for (const g of live) guids.add(g);
     }
     if (lastCollectedGuids && guids.size === lastCollectedGuids.size
@@ -567,7 +567,7 @@ function startMemoryPolling() {
     broadcast('collected-tokens', { guids: [...guids] });
     if (!genLogged) {
       genLogged = true;
-      console.log(`[collect] collected set resolved: ${guids.size} GUID(s) (tokens+beetles)`);
+      console.log(`[collect] collected set resolved: ${guids.size} GUID(s) (tokens+beetles+chests)`);
     }
   }, cfg.ar.collectedPollMs);
 
@@ -1200,31 +1200,57 @@ ipcMain.handle('areas:load', () => areas);
 
 // The AR layer's POI set: collectible positions in game world coords, from gibbed's
 // Almanac dumps vendored in data/almanac (see FINDINGS.md). Engine axes: x, y=height, z,
-// so each entry becomes { x, h: y, y: z } plus a `kind` for the overlay's marker style.
-// 167 = Seeker's Tokens, 161 = Golden Trove Beetles.
+// so each entry becomes { x, h: y, y: z } plus `kind` (marker style) and, for chests,
+// `size` (a label tag). 167 = tokens, 161 = beetles, the rest are chests by size.
 const AR_POI_FILES = [
   { file: '167.json', kind: 'token' },
   { file: '161.json', kind: 'beetle' },
+  { file: '10.json', kind: 'chest', size: 'S' },
+  { file: '11.json', kind: 'chest', size: 'M' },
+  { file: '12.json', kind: 'chest', size: 'L' },
+  { file: '495.json', kind: 'chest', size: 'XL' },
+  { file: '692.json', kind: 'chest', size: 'S' },
+  { file: '693.json', kind: 'chest', size: 'M' },
+  { file: '694.json', kind: 'chest', size: 'L' },
+  { file: '13.json', kind: 'chest', size: '◆' },   // sphinx opulent
+  { file: '653.json', kind: 'chest', size: '◆' },  // sphinx-sealed
+  { file: '465.json', kind: 'chest', size: '◆' },  // sphinx-sealed L
 ];
-function loadArPoiFile(file, kind) {
+function loadArPoiFile(file, kind, size) {
   try {
     const raw = JSON.parse(require('fs').readFileSync(
       require('path').join(__dirname, '..', '..', 'data', 'almanac', file), 'utf-8'));
-    return Object.entries(raw.locations).map(([guid, p]) => ({ guid, kind, x: p.x, h: p.y, y: p.z }));
+    return Object.entries(raw.locations).map(([guid, p]) => ({ guid, kind, size, x: p.x, h: p.y, y: p.z }));
   } catch {
     return [];   // no data file — that kind just doesn't draw
   }
 }
-ipcMain.handle('ar:pois:load', () => AR_POI_FILES.flatMap(({ file, kind }) => loadArPoiFile(file, kind)));
+ipcMain.handle('ar:pois:load', () => AR_POI_FILES.flatMap(({ file, kind, size }) => loadArPoiFile(file, kind, size)));
 
-// Beetle data kept main-side for the two beetle readers:
-//   - arBeetleGuids: lowercase GUID set — contextDbReader intersects the ContextDB's
-//     collected set against these, so only known beetles come back (the DB holds every
-//     gatherable). Same idea as the token filter's implicit intersection.
-//   - arBeetlePois: {guid, x, y=engine-z} — gimmickReader needs positions to bridge a
-//     nearby loaded beetle gimmick back to its almanac GUID (the in-session read).
-const arBeetlePois = loadArPoiFile('161.json', 'beetle').map((p) => ({ guid: p.guid, x: p.x, y: p.y }));
-const arBeetleGuids = new Set(arBeetlePois.map((p) => p.guid.toLowerCase()));
+// Collectible data kept main-side for the collected-state readers. For each kind:
+//   - a lowercase GUID Set — contextDbReader intersects the save-wide ContextDB against
+//     it, so only known collectibles come back (the DB holds everything). Same idea as
+//     the token filter's implicit intersection.
+//   - a {guid, x, y=engine-z} POI list — gimmickReader position-matches a nearby loaded
+//     gimmick back to its almanac GUID for the in-session read.
+function poiSet(entries) { return { pois: entries.map((p) => ({ guid: p.guid, x: p.x, y: p.y })), guids: new Set(entries.map((p) => p.guid.toLowerCase())) }; }
+const arBeetle = poiSet(loadArPoiFile('161.json', 'beetle'));
+const arChest = poiSet(AR_POI_FILES.filter((f) => f.kind === 'chest').flatMap(({ file, kind, size }) => loadArPoiFile(file, kind, size)));
+
+// Type indices from config/singletons.json, for the readers' live vtable resolution.
+const singletons = configStore.load('singletons') || {};
+const stType = (n) => (singletons.types && singletons.types[n] && singletons.types[n].typeIndex);
+// ContextDB (persistent) specs: which context type holds each kind's state, and the flag.
+const contextSpecs = [
+  { guids: arBeetle.guids, contextTypeIndex: stType('app.GatherContext'), flagOffset: 0x28, collectedValue: 0 },
+  { guids: arChest.guids, contextTypeIndex: stType('app.GmItemContext'), flagOffset: 0x19, collectedValue: 1 },
+].filter((s) => typeof s.contextTypeIndex === 'number');
+// Live-gimmick (in-session) specs. Beetles pre-filter by vtable (exact, cheap); chests
+// rely on position + the shared GimmickBase "interacted" byte (their runtime type varies).
+const gimmickSpecs = [
+  { pois: arBeetle.pois, flagOffset: 0x3e4, collectedValue: 1, vtableTypeIndex: stType('app.Gm82_009') },
+  { pois: arChest.pois, flagOffset: 0x374, collectedValue: 1 },
+];
 
 // Seeds the shared inset scale/rotation from a 3-point calibration run inside one
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then

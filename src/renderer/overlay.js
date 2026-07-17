@@ -924,6 +924,7 @@ function arLoop() {
       clamped,
       angle: clamped ? Math.atan2(-ndcY, ndcX) : 0,   // outward direction, screen space
       kind: p.kind || 'token',
+      size: p.size,   // chest size tag (S/M/L/XL/◆), appended to the label
     });
   }
   // On-screen markers all draw; edge markers are capped to the nearest few so a dense
@@ -958,6 +959,9 @@ function arLoop() {
     }
   };
 
+  // Distance label, with the chest size appended (e.g. "42u · L").
+  const labelFor = (it) => (it.kind === 'chest' && it.size ? `${Math.round(it.dist)}u · ${it.size}` : `${Math.round(it.dist)}u`);
+
   for (const it of draw) {
     if (it.clamped) {
       // An outward-pointing arrowhead pinned to the border — "a token is off this way".
@@ -985,7 +989,7 @@ function arLoop() {
         ctx.fillStyle = '#fff';
         ctx.strokeStyle = 'rgba(0,0,0,0.85)';
         ctx.lineWidth = 3;
-        const label = `${Math.round(it.dist)}u`;
+        const label = labelFor(it);
         ctx.strokeText(label, lx, ly);
         ctx.fillText(label, lx, ly);
       }
@@ -1007,7 +1011,7 @@ function arLoop() {
       ctx.fillStyle = '#fff';
       ctx.strokeStyle = 'rgba(0,0,0,0.85)';
       ctx.lineWidth = 3;
-      const label = `${Math.round(it.dist)}u`;
+      const label = labelFor(it);
       ctx.strokeText(label, it.sx, it.sy + size + 13);
       ctx.fillText(label, it.sx, it.sy + size + 13);
     }

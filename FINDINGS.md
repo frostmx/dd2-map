@@ -1472,13 +1472,44 @@ uncollected. Validated end-to-end against a real save: **42 of 78 collected, 19 
 17 not-in-DB**, tracking the live save state as beetles are gathered/reloaded — with no
 gimmick loaded.
 
-**Wiring:** `collectedTimer` unions three reads into one GUID set before the diff/broadcast
-— tokens (`generateManagerReader`), persistent beetles (`contextDbReader.read(handle,
-moduleBase, arBeetleGuids)`), and in-session beetles (`gimmickReader.read(handle, moduleBase,
-frameOffset, arBeetlePois)`). One `collected-tokens` message carries all of it; the overlay
-filters `arPois` by GUID regardless of kind. Main-side, `arBeetleGuids` (GUID set) intersects
-the ContextDB result down to beetles (the DB holds every gatherable), and `arBeetlePois`
-(positions) lets the gimmick read bridge a nearby loaded beetle back to its almanac GUID.
+**Wiring:** `collectedTimer` unions the reads into one GUID set before the diff/broadcast —
+tokens (`generateManagerReader`), the persistent ContextDB read (`contextDbReader`, one walk
+over beetle + chest specs), and the in-session live-gimmick read (`gimmickReader`, beetle +
+chest specs). One `collected-tokens` message carries all of it; the overlay filters `arPois`
+by GUID regardless of kind. Both readers are **spec-driven** (see next section): each spec is
+`{guids/pois, typeIndex, flagOffset, collectedValue}`, so adding a collectible is data, not
+new traversal code.
+
+### Chests — SHIPPED (same machinery, 2026-07-18)
+
+Chests (Treasure Boxes) are the third AR collectible — **980 GUIDs** across `data/almanac/`
+(`10`=S, `11`=M, `12`=L, `495`=XL, plus special/sphinx), drawn as **blue squares** with the
+size in the label (`42u · L`). Structurally identical to beetles, so both readers were
+**generalized to take a list of specs** rather than duplicated:
+
+- **Persistent (ContextDB):** the exact same `UniqueID2Keys → Records → Contexts` walk, but
+  the per-record context is an **`app.GmItemContext`** (type 31281) instead of `GatherContext`,
+  and opened iff **byte `+0x19 == 1`** — *opposite polarity* to beetles (`+0x28 == 0`). Found
+  by opening a chest, saving, diffing the `GmItemContext`; validated by the distribution across
+  725 in-DB chests (452 opened / 273 not) with the just-opened one reading `1`. `contextDbReader`
+  now takes both specs and does **one** dictionary walk.
+- **In-session (live gimmick):** same `ManagedGimmicks` walk, but chests are **not**
+  vtable-filtered — their runtime gimmick type varies by size (`app.gm80_001`=S and
+  `gm80_097`=L resolve by name; M/XL/variants don't), so a chest is identified **purely by the
+  position match** to an almanac chest point, reading the shared `GimmickBase` "interacted"
+  byte **`+0x374 == 1`** (generic — it also flips on beetle gather; the position match is what
+  makes it a chest). Beetles keep their exact vtable pre-filter. Both go through the one
+  spec-driven `gimmickReader.read`.
+
+The two ContextDB flags are opposite polarity and the two gimmick reads use different identity
+strategies — the `{flagOffset, collectedValue, vtableTypeIndex?}` spec captures both cleanly.
+Chest chains live in `config/singletons.json` (`chestContextChain`, `chestGimmickChain`).
+
+**Why both reads, for chests specifically:** unlike beetles, an opened chest's gimmick *does*
+respawn on reload (carrying a persistent `+0x3d0` free-bit) — but it still only exists when
+you're **near** it. Your ~450 already-opened chests scattered across the map have no loaded
+gimmick, so only the global ContextDB can hide them from launch. The gimmick read just adds
+the "vanish the instant you open it, before you save" immediacy.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +

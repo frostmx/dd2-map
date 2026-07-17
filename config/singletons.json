@@ -45,6 +45,10 @@
     "app.GatherContext": {
       "typeIndex": 74683,
       "note": "Not a singleton. The per-collectible gather record inside a ContextDatabaseRecord. The reader resolves its managed_vt live from TDB types[typeIndex]+0x40 to pick it out of a record's Contexts list. Collected iff byte +0x28 == 0. See beetleContextChain."
+    },
+    "app.GmItemContext": {
+      "typeIndex": 31281,
+      "note": "Not a singleton. The per-chest item record inside a ContextDatabaseRecord (chests' analog of GatherContext). Opened/collected iff byte +0x19 == 1 (opposite polarity to GatherContext). Same ContextDB walk as beetles; see chestContextChain."
     }
   },
   "cameraChain": {
@@ -113,6 +117,20 @@
     "transformWorldMatrix": "0x80",
     "worldMatrixPosRow": "0x30",
     "collectedFlagOffset": "0x3e4",
+    "matchRadiusU": 2.5
+  },
+  "chestContextChain": {
+    "note": "PERSISTENT chest opened-state, save-wide (near or far, survives reload). Identical ContextDB walk to beetleContextChain, but the per-record context is an app.GmItemContext (type 31281, resolved live from TDB types[31281]+0x40) instead of GatherContext, and OPENED iff its BYTE +0x19 == 1 (opposite polarity to beetles' +0x28==0). Found by opening a chest, saving, and diffing the GmItemContext; validated by distribution across 725 in-DB chests (452 opened / 273 not) with the just-opened one reading 1. Chest almanac files: 10=S,11=M,12=L,495=XL,plus special/sphinx. A chest GUID absent from UniqueID2Keys was never approached -> not opened. contextDbReader takes both this and the beetle spec and does ONE UniqueID2Keys walk.",
+    "context": "app.GmItemContext",
+    "contextTypeIndex": 31281,
+    "openedByteOffset": "0x19",
+    "openedValue": 1
+  },
+  "chestGimmickChain": {
+    "note": "IN-SESSION chest opened read (complement to chestContextChain, unioned with it). Same GimmickManager.ManagedGimmicks walk as beetles, BUT chests are NOT vtable-filtered: their runtime gimmick type varies by size (app.gm80_001=S, app.gm80_097=L resolve; the M/XL/variant types don't resolve by name), so identity is purely the position match to a known almanac chest position. Opened flag: the shared GimmickBase 'interacted' BYTE +0x374 == 1 (flips the instant you open; also flips on beetle gather - it's generic, and the position match to a chest point is what makes it a chest). Resets on reload, which is fine - chestContextChain covers post-reload. (A chest gimmick's +0x3d0 free-bits also flips to a nonzero 'opened' value that survives reload, but its offset is type-specific; +0x374 is the portable one.)",
+    "openedFlagOffset": "0x374",
+    "openedValue": 1,
+    "vtableFiltered": false,
     "matchRadiusU": 2.5
   }
 }
