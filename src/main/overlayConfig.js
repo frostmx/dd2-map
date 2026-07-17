@@ -27,6 +27,38 @@ const DEFAULTS = {
   // true = start icons-only (what you play with); false = start on the full map.
   openIconsOnly: true,
 
+  // The AR token layer (icons-only mode): Seeker's Token markers projected to WHERE THE
+  // TOKEN IS in 3D, through the game's own camera basis and fov. arTokens is the on/off
+  // (a control-window checkbox); the knobs decide how it feels.
+  arTokens: true,
+  ar: {
+    radiusU: 200,     // draw tokens within this many game units of the player (a sphere)
+    markerPx: 14,     // marker size at ~40u; scales with distance, clamped 6..28 px
+    labels: true,     // distance label under each marker
+    // Vertical frame correction. The Almanac's x/z match the game's runtime frame
+    // exactly, but its HEIGHT (engine-y) sits in a vertical origin shifted by a flat
+    // 100u — measured 2026-07-17 standing dead-on a token: player global height
+    // 207.96, token raw y 107.95, gap 100.01. Added to every POI height.
+    heightOffsetU: 100,
+    // Cosmetic float: lift the MARKER above the collectible so it hovers near eye
+    // level instead of at the object's feet. Not a physics correction — readability.
+    // FADED IN with distance (floatFadeU): a world-space lift is a big ANGLE up close
+    // (1.6u at 2u away = ~39deg — the marker flies off the token) but invisible far
+    // off. So the lift ramps from 0 on top of the token to floatU past floatFadeU,
+    // which makes the marker LAND on the shiny as you walk up and float for visibility
+    // at range. Tune to taste.
+    floatU: 1.6,
+    floatFadeU: 8,
+    // Render-interpolation delay (ms). Markers are drawn from a camera interpolated to
+    // (now - interpMs), between the two latest frames, so feed/vsync phase can't judder
+    // the motion. ~1.5 feed intervals guarantees two frames straddle the render time.
+    // Higher = smoother but more latent on fast flicks; lower = snappier but can judder.
+    interpMs: 8,
+    // Off-screen tokens clamp to the screen border as arrows rather than vanishing.
+    // Cap how many, so a dense area doesn't wall the edges — nearest ones win.
+    edgeMax: 12,
+  },
+
   // The windowed F9 mode's box, as fractions of the screen (resolution-independent). The
   // overlay converts to pixels; move/resize writes it back here. Default: upper-right.
   windowRect: { left: 0.63, top: 0.06, width: 0.34, height: 0.46 },
@@ -72,7 +104,7 @@ const DEFAULTS = {
   // clean (it IS the facing angle, not a direction reconstructed from noisy deltas), so
   // this only takes the edge off a fast mouse flick. Lower it if a quick look-around
   // makes the arrow feel twitchy.
-  headingEase: 0.35,
+  headingEase: 0.25,
 
   // Speed hysteresis, in game units/sec, with a dwell on each edge.
   // The dwell timer survives the dead band between the two speeds and only resets
@@ -157,11 +189,23 @@ function load() {
     ...DEFAULTS,
     ...saved,
     hotkeys: { ...DEFAULTS.hotkeys, ...(saved.hotkeys || {}) },
+    // Nested like hotkeys: a saved `ar` block must not shadow defaults for knobs it
+    // predates (e.g. heightOffsetU), or the new knob silently reverts to undefined.
+    ar: { ...DEFAULTS.ar, ...(saved.ar || {}) },
   };
 }
 
+// The `ar` block is code/JSON tuning only — no UI writes it — but load() folds the
+// full DEFAULTS.ar into the in-memory cfg. If we persisted that, the first UI save
+// (a checkbox toggle) would freeze every ar knob into overlay.json and from then on
+// silently shadow future DEFAULTS.ar edits. So save NEVER authors `ar`: it writes back
+// only the ar the user actually put on disk (hand-edited), and drops the merged one.
 function save(cfg) {
-  store.save('overlay', cfg);
+  const onDisk = store.load('overlay') || {};
+  const toWrite = { ...cfg };
+  if (onDisk.ar !== undefined) toWrite.ar = onDisk.ar;
+  else delete toWrite.ar;
+  store.save('overlay', toWrite);
 }
 
 module.exports = { DEFAULTS, load, save };

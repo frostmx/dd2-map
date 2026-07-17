@@ -589,6 +589,7 @@ window.dd2overlay.onCommand('overlay:interactive', (interactive) => {
 // panel is decorative: every line is either where you are or a question you can answer.
 const hud = document.getElementById('areaHud');
 const hudWhere = document.getElementById('hudWhere');
+const hudTime = document.getElementById('hudTime');
 const hudNear = document.getElementById('hudNear');
 const hudTitle = document.getElementById('hudTitle');
 const hudDetail = document.getElementById('hudDetail');
@@ -619,7 +620,9 @@ function updateHud(data) {
 
   // Nothing to say: no question pending, not in a dungeon or a named building, and no
   // dungeon near enough to be worth naming. Then the overlay should be a map, and only that.
-  const show = cfg.areaHud !== false && (hint || data.areaName || data.placeName || nearby);
+  // A ticking clock counts as something to say — the bar doubles as the game's timepiece.
+  const show = cfg.areaHud !== false
+    && (hint || data.areaName || data.placeName || nearby || data.gameTime);
   if (!show) {
     if (hudSig !== null) { hud.hidden = true; hudSig = null; }
     return;
@@ -645,12 +648,20 @@ function updateHud(data) {
     ? `${near.name}${near.floor ? ` ${near.floor}` : ''} · ${near.dist.toFixed(0)}u`
     : '';
 
+  // The in-game clock gets its own line under the location. It updates once per game
+  // minute (every 2 real seconds), which the sig below already coalesces.
+  const timeText = data.gameTime
+    ? `day ${data.gameTime.day} · ${String(data.gameTime.hh).padStart(2, '0')}:${String(data.gameTime.mm).padStart(2, '0')}`
+    : '';
+
   const actions = (hint && hint.actions) || [];
-  const sig = `${where}|${nearText}|${hint ? `${hint.title}|${hint.detail}|${actions.join('|')}` : ''}`;
+  const sig = `${where}|${timeText}|${nearText}|${hint ? `${hint.title}|${hint.detail}|${actions.join('|')}` : ''}`;
   if (sig === hudSig) return;
   hudSig = sig;
 
   hudWhere.textContent = where;
+  hudTime.textContent = timeText;
+  hudTime.classList.toggle('empty', !timeText);
   hudNear.textContent = nearText;
   hudNear.classList.toggle('empty', !nearText);
   hudTitle.textContent = hint ? hint.title : '';
@@ -666,6 +677,9 @@ function updateHud(data) {
 // --- Position feed -----------------------------------------------------------
 window.dd2overlay.onGamePosition((data) => {
   if (!cfg) return;
+  // Engine [x, h, y] for the AR layer — GLOBAL height, matching x/y and the POI table
+  // (the plain `height` is local-frame and can be hundreds of units off — see index.js).
+  arPlayer = [data.x, data.heightGlobal != null ? data.heightGlobal : data.height, data.y];
   updateHud(data);
   if (!calibration) return;
 
@@ -761,6 +775,215 @@ window.dd2overlay.onGamePosition((data) => {
   runInWebview(`window.__dd2_apply && window.__dd2_apply(${lngLat.lng}, ${lngLat.lat}, 1, ${moved}${aheadArgs})`);
   pushZoomTarget();
 });
+
+// --- AR token layer -----------------------------------------------------------
+// Seeker's Tokens projected to WHERE THE TOKEN IS on screen, through the game
+// camera's own basis and fov (the `camera-frame` feed). Active in every F9 mode
+// while the arTokens setting is on. No occlusion — markers glow through walls,
+// which is the point of a finder. Off-screen tokens clamp to the border as
+// outward-pointing arrows instead of vanishing.
+//
+// Axes: every vector here is engine [x, height, y] — positions from the feed, the
+// basis rows, and the POI table all agree, so a dot product needs no shuffling.
+const arCanvas = document.getElementById('arCanvas');
+const arCtx = arCanvas.getContext('2d');
+let arPois = [];              // { guid, x, h, y }
+let arPlayer = null;          // latest [x, h, y] of the player
+let arDrawn = false;          // whether the canvas currently has content (cheap clear)
+
+// The camera feed arrives at ~60Hz but on a clock that drifts against the display's
+// vsync, and on a >60Hz monitor the rAF render outruns it — either way the render
+// keeps landing on unevenly-spaced samples, which is the residual judder. Fix: keep
+// the last two frames with arrival timestamps and INTERPOLATE to a render time a hair
+// in the past (arInterpMs). Feed rate and phase stop mattering; the scene is a few ms
+// latent but perfectly smooth and stays glued to the world (markers use the same
+// interpolated camera, so nothing drifts relative to the terrain).
+let arCamPrev = null;         // { f, t }
+let arCamCurr = null;
+
+window.dd2overlay.onCommand('camera-frame', (f) => {
+  arCamPrev = arCamCurr;
+  arCamCurr = { f, t: performance.now() };
+});
+window.dd2overlay.loadArPois().then((pois) => { arPois = pois || []; });
+
+const arLerp = (a, b, t) => a + (b - a) * t;
+const arLerp3 = (A, B, t) => [arLerp(A[0], B[0], t), arLerp(A[1], B[1], t), arLerp(A[2], B[2], t)];
+const arNorm3 = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+
+// Camera at renderTime, interpolated between the two most recent frames. Basis vectors
+// lerp then re-normalize (exact enough for the tiny per-frame rotation at 60Hz).
+function arSampleCamera(renderTime) {
+  if (!arCamCurr) return null;
+  if (!arCamPrev || arCamCurr.t <= arCamPrev.t) return arCamCurr.f;
+  let a = (renderTime - arCamPrev.t) / (arCamCurr.t - arCamPrev.t);
+  a = Math.max(0, Math.min(1, a));
+  const A = arCamPrev.f, B = arCamCurr.f;
+  return {
+    pos: arLerp3(A.pos, B.pos, a),
+    right: arNorm3(arLerp3(A.right, B.right, a)),
+    up: arNorm3(arLerp3(A.up, B.up, a)),
+    fwd: arNorm3(arLerp3(A.fwd, B.fwd, a)),
+    fovDeg: arLerp(A.fovDeg, B.fovDeg, a),
+    aspect: arLerp(A.aspect, B.aspect, a),
+  };
+}
+
+function arActive() {
+  // Every F9 mode: the AR canvas sits above the map webview (z-index), so tokens show
+  // over the game in icons mode and over the map in the full-map/windowed modes too.
+  return cfg && cfg.arTokens !== false && arCamCurr && arPlayer && arPois.length;
+}
+
+function arLoop() {
+  requestAnimationFrame(arLoop);
+  if (!arActive()) {
+    if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; }
+    return;
+  }
+  const W = window.innerWidth, H = window.innerHeight;
+  const dpr = window.devicePixelRatio || 1;
+  if (arCanvas.width !== Math.round(W * dpr) || arCanvas.height !== Math.round(H * dpr)) {
+    arCanvas.width = Math.round(W * dpr);
+    arCanvas.height = Math.round(H * dpr);
+  }
+  const ctx = arCtx;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  arDrawn = true;
+
+  const cfgAr = cfg.ar || {};
+  const interpMs = typeof cfgAr.interpMs === 'number' ? cfgAr.interpMs : 24;
+  const cam = arSampleCamera(performance.now() - interpMs);
+  if (!cam) { if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; } return; }
+  const radius = cfgAr.radiusU || 200;
+  const markerPx = cfgAr.markerPx || 14;
+  // POI height frame correction (Almanac -> runtime, physics). The cosmetic float is
+  // applied per-marker below, faded by distance, so it's handled inside the loop.
+  const hOff = typeof cfgAr.heightOffsetU === 'number' ? cfgAr.heightOffsetU : 0;
+  const floatU = typeof cfgAr.floatU === 'number' ? cfgAr.floatU : 0;
+  const floatFade = typeof cfgAr.floatFadeU === 'number' ? cfgAr.floatFadeU : 8;
+  const [cx, ch, cy] = cam.pos;
+  const dot = (a, x, h, y) => a[0] * x + a[1] * h + a[2] * y;
+
+  // Which way is "in front"? The player is always in front of a chase camera, so the
+  // sign of fwd·(player - cam) IS the view direction — self-calibrating, no convention
+  // to get wrong, and it keeps working if the engine's handedness surprises us.
+  const pd = dot(cam.fwd, arPlayer[0] - cx, arPlayer[1] - ch, arPlayer[2] - cy);
+  const viewSign = pd >= 0 ? 1 : -1;
+
+  const tanV = Math.tan((cam.fovDeg * Math.PI / 180) / 2);
+  const edge = 0.94;               // clamp radius in ndc; leaves room for the marker
+  const edgeMax = typeof cfgAr.edgeMax === 'number' ? cfgAr.edgeMax : 12;
+  const items = [];
+  for (const p of arPois) {
+    const truePh = p.h + hOff;   // POI's true height in the runtime frame
+    // Distance is measured to the TRUE position (not the floated marker), so the fade
+    // and radius don't feed back on themselves.
+    const distPlayer = Math.hypot(p.x - arPlayer[0], truePh - arPlayer[1], p.y - arPlayer[2]);
+    if (distPlayer > radius) continue;
+    // Float fades in with distance: 0 on top of the token, full past floatFade.
+    const ph = truePh + floatU * Math.min(1, distPlayer / floatFade);
+    const dx = p.x - cx, dh = ph - ch, dy = p.y - cy;
+    // Screen-space right/up amounts. Right is NEGATED: verified in-game 2026-07-17 —
+    // the raw right-axis projection mirrors left/right (RE Engine looks down -Z, so
+    // with the player-anchored viewSign screen-right is MINUS the transform's X row).
+    const sr = -(viewSign * dot(cam.right, dx, dh, dy));
+    const su = dot(cam.up, dx, dh, dy);
+    const depth = viewSign * dot(cam.fwd, dx, dh, dy);
+    let ndcX, ndcY;
+    if (depth > 0.1) {
+      ndcX = sr / (depth * tanV * cam.aspect);
+      ndcY = su / (depth * tanV);
+    } else {
+      // Behind the camera: no valid perspective. Point toward the token using its
+      // screen-plane direction, forced far out so it clamps to the border on the
+      // correct side (continuous with the front edge as a token crosses behind).
+      const m = Math.hypot(sr, su) || 1;
+      ndcX = (sr / m) * 10;
+      ndcY = (su / m) * 10;
+    }
+    const clamped = Math.abs(ndcX) > 1 || Math.abs(ndcY) > 1;
+    let cxn = ndcX, cyn = ndcY;
+    if (clamped) {
+      const s = edge / Math.max(Math.abs(ndcX), Math.abs(ndcY));
+      cxn = ndcX * s; cyn = ndcY * s;
+    }
+    items.push({
+      sx: (1 + cxn) * W / 2,
+      sy: (1 - cyn) * H / 2,
+      dist: distPlayer,
+      clamped,
+      angle: clamped ? Math.atan2(-ndcY, ndcX) : 0,   // outward direction, screen space
+    });
+  }
+  // On-screen markers all draw; edge markers are capped to the nearest few so a dense
+  // area doesn't wall the border with arrows. Far first so near draws on top.
+  const onScreen = items.filter((i) => !i.clamped).sort((a, b) => b.dist - a.dist);
+  const edgeItems = items.filter((i) => i.clamped).sort((a, b) => a.dist - b.dist).slice(0, edgeMax);
+  const draw = [...edgeItems, ...onScreen];
+
+  for (const it of draw) {
+    if (it.clamped) {
+      // An outward-pointing arrowhead pinned to the border — "a token is off this way".
+      const sz = 13;
+      ctx.save();
+      ctx.translate(it.sx, it.sy);
+      ctx.rotate(it.angle);
+      ctx.beginPath();
+      ctx.moveTo(sz, 0);
+      ctx.lineTo(-sz * 0.7, sz * 0.85);
+      ctx.lineTo(-sz * 0.7, -sz * 0.85);
+      ctx.closePath();
+      ctx.fillStyle = '#ffd24a';
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 2;
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+      if (cfgAr.labels !== false) {
+        // Label nudged toward screen centre so it stays on-canvas at the border.
+        const lx = it.sx - Math.cos(it.angle) * 22;
+        const ly = it.sy - Math.sin(it.angle) * 22;
+        ctx.font = '12px system-ui, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+        ctx.lineWidth = 3;
+        const label = `${Math.round(it.dist)}u`;
+        ctx.strokeText(label, lx, ly);
+        ctx.fillText(label, lx, ly);
+      }
+      continue;
+    }
+    const size = Math.max(12, Math.min(56, markerPx * 80 / Math.max(10, it.dist)));
+    const alpha = Math.max(0.35, 1 - it.dist / (radius * 1.2));
+    ctx.globalAlpha = alpha;
+    ctx.beginPath();                        // a diamond
+    ctx.moveTo(it.sx, it.sy - size);
+    ctx.lineTo(it.sx + size * 0.7, it.sy);
+    ctx.lineTo(it.sx, it.sy + size);
+    ctx.lineTo(it.sx - size * 0.7, it.sy);
+    ctx.closePath();
+    ctx.fillStyle = '#ffd24a';
+    ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+    ctx.lineWidth = 2;
+    ctx.fill();
+    ctx.stroke();
+    if (cfgAr.labels !== false) {
+      ctx.font = '12px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff';
+      ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+      ctx.lineWidth = 3;
+      const label = `${Math.round(it.dist)}u`;
+      ctx.strokeText(label, it.sx, it.sy + size + 13);
+      ctx.fillText(label, it.sx, it.sy + size + 13);
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+requestAnimationFrame(arLoop);
 
 // --- Boot --------------------------------------------------------------------
 Promise.all([

@@ -80,6 +80,11 @@
     /* The detail carries a second line (the nearest named place) when there is one. */
     #hudDetail { white-space: pre-line; }
     #hudNear, #hudDetail { color: #93a3b1; }
+    #hudTime { color: #93a3b1; font-variant-numeric: tabular-nums; }
+    #arCanvas {
+      position: fixed; inset: 0; width: 100vw; height: 100vh;
+      pointer-events: none;   /* the overlay is click-through; the canvas must be too */
+    }
     #hudTitle { margin-top: 5px; color: #f0b757; font-weight: 600; }
     #hudAction { margin-top: 3px; color: #ffffff; }
     #hudAction b {
@@ -145,10 +150,15 @@
     <div class="rz" data-dir="se"></div>
   </div>
 
+  <!-- The AR layer: token markers projected to where the token IS in the world, through
+       the game camera's basis and fov. Drawn only in icons-only mode (see arLoop). -->
+  <canvas id="arCanvas"></canvas>
+
   <!-- Where you are, what's near, and — when the app is only guessing — what to press.
        Hidden until there's something to say (see updateHud in overlay.js). -->
   <div id="areaHud" hidden>
     <div id="hudWhere"></div>
+    <div id="hudTime"></div>
     <div id="hudNear"></div>
     <div id="hudTitle"></div>
     <div id="hudDetail"></div>

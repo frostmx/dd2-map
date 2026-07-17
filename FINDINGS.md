@@ -976,6 +976,385 @@ Sketch of `tools/mergeAreas.js`, if we build it:
 Worth knowing before shipping the app around: `Home`, `Insert`, `PageUp`/`PageDown` are
 registered as **global** shortcuts, so they are swallowed system-wide while the app runs.
 
+### Seeker's Token ground truth (2026-07-17): 240 exact correspondences, free
+
+The Sphinx's Riddle of Rumination made someone dump every Seeker's Token position, and
+that dump is a calibration dataset better than anything we can produce by playing:
+**240 points known exactly in BOTH coordinate systems** — game world coords on one side,
+mapgenie markers on the other.
+
+**Game side:** [gibbed's `gibbed_RiddleOfRuminationMarker.lua`](https://github.com/gibbed/DD2-REFramework-Scripts/blob/main/gibbed_RiddleOfRuminationMarker.lua)
+has all 240 inline, keyed by GUID, as engine `(x, y, z)` = our `(x, h, y)` (RE Engine is
+y-up — same axis order as the position struct). The repo's `docs/gimmicks.csv` is the
+gimmick-id→name dictionary. His Almanac mod's beetle/chest JSONs are **Nexus-download
+only**, not in the git repo — but see the endpoint below, which makes them unnecessary.
+
+**mapgenie side — the endpoint that beats scraping:**
+
+```
+https://mapgenie.io/api/v1/maps/599/full        (browser User-Agent required)
+```
+
+returns every location on the DD2 world map (5372 of them, all categories — tokens,
+chests, beetles, everything), nested under `groups[].categories[].locations`. Seeker's
+Token is category **10735**. This is the same data the SPA loads, without the Redux
+store, the webview, or the app running. (`api/v1/maps/599` = map metadata; the
+`window.mapData` blob embedded in the page HTML has categories but NOT locations.)
+
+**What matching them proved (run 2026-07-17, scripts in session scratchpad):**
+
+- 211/240 tokens pair 1:1 through the world affine at <30u, **median error 4.6u**.
+  The 3-click world calibration is fine; most of the 4.6u is mapgenie's hand-placement.
+- The 29 leftovers are dungeon tokens. 18 of them land on already-calibrated inset
+  panels at **0.2–10u** (Dragonsbreath 5F 0.2u, Forgotten Tunnel B1F 1.0u, Twilight ×3
+  ≤2.6u…) — independent proof, across ~13 dungeons, that one shared `insetLinear` +
+  one-correspondence-per-panel is *correct*, not just convenient.
+- Three tokens in Forbidden Magick Research Lab imply the same translation within 5.5u
+  **and** agree (3.7–6.4u) with the LocalArea solver's score-0.22 solve for id 337 —
+  two independent methods converging on an id that sat below `AREA_TRUST`. Written to
+  `areas.json` as `"337"` with `src: "tokens"`.
+- Also written: `2531|` (Rock Wall Berme, no prior entry) and `2455|1F`/`2455|2F`
+  (Waterfall Cave — the floor labels are **provisional, ranked by token height**;
+  `floorHeights` seeded from the tokens' h with `n: 1` so real visits refine them).
+- **`src: "tokens"`** = translation solved from a token correspondence; both halves
+  absolute, so these entries pool/merge exactly like `points`-bearing ones.
+
+**Trust ordering (by data provenance, not by who typed it).** When two transforms for
+the same panel disagree, prefer the one whose inputs passed through fewer human hands:
+
+1. **Trusted correlation solves** (`src: "game"`, score ≥ `AREA_TRUST`) — the game's own
+   inset texture image-correlated against mapgenie's drawn panel (`matchInset.py`). No
+   human placement anywhere in the loop. Beats everything.
+2. **Token pairs** (`src: "tokens"`) — game half exact (from the dump), map half a
+   hand-placed mapgenie marker (median ~4.6u error, occasional 60u blunders).
+3. **Doorway crossings** (`auto: true`) — player *near* a door ↔ hand-placed portal marker.
+4. Manual 3-point clicks.
+
+Consequences applied 2026-07-17: Trembling Hollow keeps its trusted solves (the token
+disagreed by 60u — that indicts the *marker*, rule 1 beats rule 2); Guerco Cavern got
+the token entry `2492|` (its correlation solve scored 0.299, below trust — an untrusted
+correlation loses to an exact game coordinate, rule 2 beats a failed rule 1).
+
+**Known-bad mapgenie markers (do NOT "fix" our transforms to match them):**
+
+- Trembling Hollow 2F token (mapgenie id 330232) sits ~60u off the *trusted* LocalArea
+  solves for 418/419. The trusted solves win; the marker is misplaced.
+- Guerco Cavern token (330589, "down in the ravine") is 255u from the score-0.299 B1F
+  solve — the solve is below trust, so the token won (see trust ordering above); written
+  as `2492|` with floor `''`. If the correlation solver later scores Guerco ≥ trust and
+  disagrees, the solver wins and this entry should go.
+- Two tokens (330995, 331021) fall inside no inset bbox at all.
+
+**Stale numeric entries in `areas.json`.** The `src: "game"` numeric keys are a snapshot
+of an *older* LocalArea mapping: disk says `"341"` = Waterfall Cave, current
+`localAreas.json` says 341 = Vernworth, and the disk transform projects outside
+mapgenie's Waterfall bbox entirely. `mergeLocalAreas()` only overwrites ids the current
+solver *trusts*, so stale low-score ids linger on disk forever. Worth a cleanup pass:
+drop any `src: "game"` entry whose id is absent (or renamed) in current `localAreas.json`.
+
+**Unused headroom:** multi-token panels are over-determined — a least-squares over them
+could *measure* the inset scale and settle "Not done yet #3" without the manual 3-point
+calibration. The tokens fitting existing panels at 0.2–7u already says the derived 1.92
+is very close.
+
+### The full Almanac dataset is vendored: `data/almanac/` (2026-07-17)
+
+gibbed's Arisen's Almanac position dumps (from the Nexus zip, mod 194 — his git repo has
+only the Lua), checked into `data/almanac/<gimmickId>.json`. Format per file:
+`{ author, description, game, see_also, locations: { "<guid>": {x, y, z} } }` — engine
+y-up, so `(x, y, z)` = our `(x, h, y)`. Contents:
+
+| file | what | count |
+|---|---|---|
+| `167.json` | Seeker's Tokens | 240 |
+| `161.json` | Golden Trove Beetles | 78 |
+| `10/11/12.json` | Chests S / M / L | 599 / 217 / 63 |
+| `495.json` | Chests XL ("sunken", mostly post-game) | 83 |
+| `692/693/694.json` | Special chests S / M / L | 1 / 4 / 1 |
+| `13/653/465.json` | Sphinx's opulent chests / Sphinx-sealed L | 1 / 1 / 10 |
+
+**Beetles (matched 2026-07-17): all 78 pair 1:1 with mapgenie at median 3.9u, max 21u,
+no dungeon tail** (beetles are all overworld). mapgenie's 4 extra beetle markers are not
+world spawns: 3 merchant-sold (Folkes, Mubarak, Angus) + 1 quest reward (*The Gift of
+Giving*) — 78 + 4 = 82 obtainable, both datasets right, different questions. The 4 can
+never be tracked by gimmick state; they're inventory transactions.
+
+**Chests (20-sample, 2026-07-17): mapgenie only maps 435 of 968 chests (~45%).** The
+sample matched 9 overworld (2.3–12u) + 8 on insets (2.8–14u, more independent panel
+confirmations); the 3 misses are most likely chests that simply aren't on mapgenie —
+with under-half coverage, "nearest marker" for an unmapped chest is a different chest.
+So for chests the game dump doesn't validate mapgenie, it **supersedes** it: 533 chests
+mapgenie doesn't have, plus S/M/L/XL size classes mapgenie doesn't distinguish.
+
+**Collected-state mechanics** (from `gibbed_Almanac.lua`, per type):
+
+- Tokens — global: collected GUID goes on `app.GenerateManager._NeverGenetateID`
+  (Capcom's typo). One set = all 240 states. Offline fallback:
+  `GimmickContext:isOnFreeBit(16)` via the ContextDB.
+- Beetles — live gimmick `get_IsBroken()`; persistent via ContextDB
+  `GatherContext:get_Num() <= 0`.
+- Chests — live gimmick `get_IsOpenedFreeBit()`; persistent via ContextDB
+  `GmItemContext:get_IsPick()`.
+- The ContextDB path: `app.ContextDBMS` → `IndexCreator.UniqueID2Keys`
+  (Dictionary<Guid, key>) → `Records[key.KeyForSystem]` → record's context object.
+  Out-of-process that's a managed-Dictionary walk — doable, but the cheap variant is
+  tokens-only via `_NeverGenetateID`, and live-nearby chests via
+  `GimmickManager.getGimmickList(id)`.
+
+The GUID↔mapgenie-location-id pairing table is derivable on demand: `data/almanac/*.json`
+(game side) × the `api/v1/maps/599/full` endpoint (mapgenie side) × the matching pass
+described above (world affine, then inset transforms).
+
+## Managed singletons via pure RPM — WORKS (`tools/singletonHunt.js`, 2026-07-17)
+
+REFramework's singleton resolution (shared/sdk/REContext.cpp, MIT) is pointer reads all
+the way down, so it ports to out-of-process ReadProcessMemory. The tool does the whole
+chain and it is **verified live against DD2** (TDB version 73):
+
+1. Pattern-scan DD2.exe for `48 8B 0D ?? ?? ?? ?? BA FF FF FF FF E8` (`mov rcx,
+   [rip+disp]` loading the `via.clr.VM` global). Found: **`DD2.exe+0xf8cbce0`** —
+   module-static, same class as the position block. The pattern scan re-finds it after
+   a patch; the RVA is stable within a build.
+2. VM+`0x3618` → TDB (magic `"TDB\0"`, version 73 at +4). 174,675 types.
+3. VM+`0x35d0` → static tables (`{elements, size}`; size == numTypes — good check).
+4. TDB tdb73 layout: `types[]`@+0x60 (0x48/entry, RETypeDefVersion71: index:19 |
+   parent:19 | … , `managed_vt` @+0x40), `typesImpl[]`@+0x68 (0x30/entry, name/ns
+   string offsets @0/@4, static_field_size @0xC), `stringPool`@+0xD0. Bulk-read all
+   three and find any type by full name.
+5. **The instance is NOT in the type's own statics.** It sits on the generic ancestor
+   `AppSingleton`1<T>`'s statics (walk `parent_typeid`), slot +0x8 — validated by the
+   slot target's first qword equalling the *derived* type's `managed_vt`.
+
+`node tools/singletonHunt.js [--save] [TypeName ...]` (DD2 running) prints the chain and
+instance addresses; `--save` writes `config/singletons.json` (RVA + type indices + the
+per-session instance pointers). Resolved and vt-verified: `app.GenerateManager`,
+`app.TimeManager`, `app.GimmickManager`.
+
+**First live read:** `app.TimeManager` instance +0x10 is a double that advanced 3.0167
+in 3.0 real seconds — the elapsed-seconds accumulator (~370,165 at time of reading;
+semantics — day-relative vs total, timeScale interaction — still to pin down). Field
+offsets for the rest (`_NeverGenetateID`, hour/day fields) come next, either from an
+il2cpp dump or by parsing TDB fields the same way.
+
+Per-session instance pointers move between launches; the durable recipe is
+RVA → VM → staticTbl → `elements[holderTypeIndex]` → slot +0x8, re-resolved at attach,
+which the runtime reader should do each boot (cheap: four reads once the RVA is known).
+
+## In-game clock — SHIPPED (`src/main/timeReader.js`, 2026-07-17)
+
+Time of day lives in the RE Engine managed singleton **`app.TimeManager`**, reached via
+the singleton-RPM chain above. Community accessor names (from the [Clock mod
+source](https://github.com/xyzkljl1/MyDD2Mod)) pointed at the right object;
+`tools/singletonHunt.js --fields app.TimeManager` then dumped the real tdb73 field table
+with **live values**, which is how the actual layout below was found — no REFramework,
+no il2cpp dump.
+
+**Layout**, instance → `_TimeData` (a nested `app.TimeManager.TimeData`-shaped object,
+field offset `+0x20` on the instance):
+
+| field | offset | meaning |
+|---|---|---|
+| `_TimeData` pointer | instance `+0x20` | (`_TimeDataLook` at `+0x28` mirrors it, both observed identical) |
+| day | `TimeData +0x2c` (i32) | in-game day counter |
+| day-seconds | `TimeData +0x40` (f32) | seconds into the current day, **wraps at 2880** |
+
+Clock constants are the game's own statics on `TimeManager` (read live, not guessed):
+`InGameDaySeconds = 2880`, `InGameHourSeconds = 120`, `InGameMinuteSeconds = 2` — so a
+day is 2880 *real* seconds (48 minutes), and `hh = daySec/120`, `mm = (daySec%120)/2`.
+
+**The clock freezes** while the game pauses world time (menus, tutorial popups — a
+frozen read is the game behaving, not a stale chain; verified by watching `WholePlayTime`
+at instance `+0x10` keep advancing 1:1 with real time throughout).
+
+`src/main/timeReader.js` re-resolves the 4-hop chain every read (config from
+`config/singletons.json`'s `app.TimeManager` entry) and rejects out-of-range values
+(`daySec` outside `[0, 2880]`, `day` outside `[0, MaxGameDay=1000000]`) rather than
+showing a garbage clock. Wired onto `game-position` as `gameTime: {day, hh, mm}` (null
+if unresolvable). Displayed in the control window's coords readout (`time  day 107
+05:20`) and on its own line in the overlay's area-readout HUD (`#hudTime`), where a
+ticking clock alone is now enough to keep the HUD visible on the open overworld.
+
+## Camera frame + AR token layer — SHIPPED (2026-07-17)
+
+The player's world position was already solved; this adds the camera's full
+**orientation** and **dynamic FOV**, and uses both to project Seeker's Token world
+coordinates onto the overlay exactly where they are in 3D — a finder that draws through
+walls, not a 2D map marker.
+
+### Finding the camera transform (`tools/cameraHunt2.js`)
+
+The existing camera-position chain (`config/dd2.offsets.json → cameraPosition`) gives a
+point, not an orientation — no basis, no fov. Scanned for both, using the same
+"relation, not value" trick as the original camera hunt:
+
+- **World-matrix scan**: swept all private RW memory for a live-camera-position match
+  embedded at `+0x30` of a block whose leading 3×3 is orthonormal (row length 1,
+  mutually perpendicular) — **zero hits**. RE Engine does *not* store the camera as a
+  packed row-major 4×4 with position folded in; a dead end worth recording so it isn't
+  retried.
+- **`RECamera`-component scan**: swept for the constant signature
+  `[near 0.01–10][far 100–1e6][fov 20–120][lookAtDistance][pad][aspect 1.0–2.7]`
+  (layout from REFramework's `ReClass_Internal_DD2.hpp`, MIT) — 508 hits. Filtered by
+  tracking which candidates' `fov`/`lookAtDistance` actually **moved** while playing
+  (aim/sprint) — down to 2, and the one with `aspect ≈ 16:9` (the other was an off-screen
+  probe camera at aspect 1.0) is the real one.
+
+**Two-phase, not interactive-single-run**: `node tools/cameraHunt2.js scan` (stand still)
+then `node tools/cameraHunt2.js track` (swing the mouse for 10s) — split because this
+harness's `!` shell channel cannot feed a running process's stdin, so a single
+`readline`-prompting script would hang forever on the first prompt.
+
+### The structural chain (durable — walks from a singleton, not a hardcoded address)
+
+```
+app.CameraManager (singleton, via the RPM chain above)
+  instance +0x10  -> _CameraObjects (fixed array)
+  array    +0x20  -> [0] the camera's REGameObject
+  GameObject +0x18 -> RETransform
+    Transform +0x80  -> worldTransform 4x4: row0 right, row1 up, row2 forward,
+                         row3 position (LOCAL frame — see below)
+    Transform +0x18  -> childComponent = RECamera
+      RECamera +0x30 near, +0x34 far, +0x38 fov(deg), +0x3C lookAtDistance, +0x44 aspect
+```
+
+Verified by walking `_CameraObjects[0]` end-to-end and finding it *is* the same
+component `cameraHunt2.js` found by scanning — not a coincidence, a structural fact.
+Recorded in `config/singletons.json` under `cameraChain`, alongside the
+`app.CameraManager` entry that `--fields`/`--save` also resolve.
+
+`src/main/cameraFrameReader.js` reads this chain, sanity-checks the basis (unit length,
+mutual orthogonality) and fov/aspect range, and returns `null` on any failure — the AR
+layer holds its last frame rather than drawing from garbage.
+
+### Two floating-origin gotchas, both cost real debugging time
+
+**The camera's world matrix is in the LOCAL (cell-relative) frame**, unlike the
+already-solved camera *position* chain which reads the global mirror directly. Fix:
+main computes `frameOffsets = { x: g.x - localX, h: g.h - height, y: g.y - localY }`
+from the ordinary position poll (updates only at cell crossings) and the fast camera
+loop adds it to `posLocal` every read — same technique as the world/local player split,
+just applied to a third source (the transform) instead of two.
+
+**The floating origin rebases the VERTICAL axis too, not just x/y.** This was assumed
+false and cost a full misdiagnosis: earlier position code only ever compared local/global
+x and y, so nobody had checked height. Measured directly: local mirror height and global
+height differed by up to several hundred units depending on where the offset happened to
+land — e.g. one session showed global height 236.29 against local 8.29 at the same
+instant. The existing `height` field (used by floor-learning, untouched) stayed
+local-frame; a new `heightGlobal` field on `game-position` and `offH` in the camera
+rebase both use the *global* player height for the delta, exactly like x/y.
+
+### The projection
+
+Standard pinhole math against the camera basis, with two conventions worth recording
+because both were wrong on the first attempt and only in-game testing caught them:
+
+```js
+depth = viewSign * dot(fwd, target - camPos)
+ndcX  = -(viewSign * dot(right, target - camPos)) / (depth * tan(fov/2) * aspect)
+ndcY  =  (viewSign * dot(up,    target - camPos)) / (depth * tan(fov/2))
+```
+
+- **`viewSign`, not a fixed handedness constant.** The player is always in front of a
+  chase camera, so `sign(dot(fwd, player - camPos))` *is* the view direction — read
+  fresh every frame instead of trusting RE Engine's convention (which the codebase had
+  no independent way to confirm). Self-calibrating: correct regardless of whether `fwd`
+  points where the camera looks or its negative.
+- **`ndcX` is negated.** Without the negation, tokens mirrored left/right — confirmed
+  visually in-game (turn to put a token on-screen-left; it drew on the right). Recorded
+  as a verified fact, not derived from an engine-handedness argument, because the
+  argument alone got it wrong once already.
+
+### Two more measured constants — the Almanac's vertical frame, and eye-vs-feet
+
+**`ar.heightOffsetU = 100`, exact.** gibbed's Almanac x/z match the game's runtime
+ground frame with zero measurable offset (confirmed repeatedly: standing on a token,
+horizontal distance ~0–2u). But Almanac **height** (engine-y) is in a *different*
+vertical origin. Measured by standing dead-on a token and reading both: player global
+height 207.96, token raw `y` 107.95 → gap **100.01**. A second reading elsewhere gave the
+same constant, so it's added as a flat `heightOffsetU` to every POI height, not derived
+per-POI.
+
+**The camera doesn't aim at the feet.** The player position feed is ground-level (feet),
+but `dot(fwd, direction-to-target)` peaks at **feet + 1.4u**, not at the feet themselves
+— measured directly (−0.91 alignment to feet vs −0.998 to feet+1.4). For a distant token
+this is invisible; for one you're standing on (camera only ~3u away) it visibly pulls the
+marker down and produces rotation-dependent drift when orbiting close — the "marker
+floats in different directions" symptom, which is real geometry (aim point ≠ feet), not
+a bug in the projection.
+
+**Fix: a distance-faded cosmetic float**, `floatU = 1.6` ramping in from 0 (on top of
+the collectible) to full at `floatFadeU = 8`u away:
+
+```js
+liftFraction = min(1, distanceToPlayer / floatFadeU)
+markerHeight = trueHeight + floatU * liftFraction
+```
+
+A flat float was tried first and rejected: 1.6u lifted a 2u-away token by ~39° of visual
+angle (way off), while being invisible past ~15u. Fading by distance makes the marker
+land exactly on a token you're standing over and float for visibility at range — best of
+both, verified in-game ("lands right on it").
+
+### Feed rate: matched to the renderer's clock, then decoupled from it entirely
+
+Camera reads run on their **own timer**, separate from the 30Hz position poll — a stale
+basis during a pan visibly swims (33ms of lag became tens of pixels of drift on distant
+markers, where angular error matters most). First fix: match the overlay's
+`requestAnimationFrame` (~60Hz) 1:1 — but two independent 60Hz clocks (Node's
+`setInterval`, the display's vsync) still drift in and out of phase, plus a >60Hz
+monitor outruns a 60Hz feed entirely, so a residual beat-frequency judder remained.
+
+**Real fix: interpolate in the renderer, decoupling feed rate from judder completely.**
+The overlay keeps the last two `camera-frame` messages with arrival timestamps
+(`performance.now()`) and draws from a camera sampled at `renderTime = now -
+interpMs` (default 24ms — roughly 1.5 feed intervals, enough to guarantee two real
+samples straddle it), lerping position/fov/aspect linearly and re-normalizing the basis
+vectors after lerping. The scene runs ~24ms latent (invisible except on very fast
+flicks) but is judder-free regardless of feed rate, monitor refresh, or phase — the
+right fix for "camera feed vs vsync" mismatches generally, worth remembering for any
+future 60Hz+ overlay work.
+
+### Off-screen handling and mode coverage
+
+Markers whose `|ndcX|` or `|ndcY|` exceeds 1 clamp to the border (`edge = 0.94` of
+half-screen) as outward-pointing arrows rather than disappearing, direction computed
+from `atan2(-ndcY, ndcX)` in screen space; capped to the nearest `edgeMax = 12` so a
+dense token cluster doesn't wall the whole border. **Behind-camera tokens** (`depth ≤
+0.1`, where the perspective divide is meaningless) are pushed far out along their
+*screen-plane* direction `(sr, su)` normalized ×10, which clamps to the correct edge and
+stays continuous with the front-facing case as a token crosses behind the player.
+
+The AR canvas (`#arCanvas`, `z-index: 10`, `pointer-events: none`) sits above the map
+`<webview>` by stacking order alone, so it draws correctly in **every F9 mode**
+(icons/map/window), not just icons-only.
+
+### Config: `overlay.json → ar` — code/JSON tuning, never UI-authored
+
+`arTokens` (checkbox, default on) is the only AR setting exposed in the control window;
+everything else is a knob in `overlayConfig.js DEFAULTS.ar`, merged like `hotkeys` so a
+saved file predating a new knob doesn't shadow its default (`ar: {...DEFAULTS.ar,
+...saved.ar}`). **The reverse trap was live and is now closed**: `save()` used to persist
+the *merged* config, so the first UI checkbox toggle would have frozen the entire `ar`
+block (all current values) into `overlay.json`, silently shadowing every future
+`DEFAULTS.ar` code change from then on. `overlayConfig.save()` now strips `ar` back out
+before writing unless the user hand-edited one into the file themselves — the block is
+tuning-by-code (or manual JSON edit), never tuning-by-UI-drift.
+
+Knobs: `radiusU` (200), `markerPx` (14), `labels` (true), `heightOffsetU` (100, physics —
+don't retune by feel), `floatU`/`floatFadeU` (1.6/8, cosmetic), `interpMs` (24, smooth↔snappy),
+`edgeMax` (12).
+
+### Data source
+
+`data/almanac/167.json` (Seeker's Tokens, vendored — see the ground-truth section above)
+loaded once via `ar:pois:load` IPC into `{guid, x, h, y}` triples (engine axes, no
+conversion needed — matches the position feed's convention directly). Not filtered by
+collected-state yet: every token draws regardless of whether it's been picked up
+(tracking that is the natural next step — `app.GenerateManager._NeverGenetateID`, per
+the earlier "can the mod tell which token I've used" research — now unblocked by the
+same singleton-RPM machinery this feature proved out).
+
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
    jump (height up/down) + movement (changed) filters. Tools: `tools/scanner.js`

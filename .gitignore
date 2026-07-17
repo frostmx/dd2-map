@@ -40,6 +40,7 @@ chains*.json
 ct_*
 z_*
 cand*.txt
+camera2.candidates.json
 ce_out.txt
 focused_*
 global_watch.txt

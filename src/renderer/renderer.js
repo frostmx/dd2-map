@@ -175,6 +175,7 @@ wireCheckbox('autoZoom', 'autoZoom');
 wireCheckbox('hideFound', 'hideFound');
 wireCheckbox('rotateWithHeading', 'rotateWithHeading');
 wireCheckbox('areaHud', 'areaHud');
+wireCheckbox('arTokens', 'arTokens');
 
 // Overlay map style: Full color (mapgenie's raster) vs Edge (our art baked from the game's
 // textures). Edge is only offered once art has been generated into userData/edge — until
@@ -218,6 +219,10 @@ window.dd2.onGamePosition((data) => {
   let lines =
     `local ${data.localX.toFixed(1)}, ${data.localY.toFixed(1)}  h ${data.height.toFixed(1)}\n` +
     `world ${data.x.toFixed(1)}, ${data.y.toFixed(1)}`;
+  if (data.gameTime) {
+    const t = data.gameTime;
+    lines += `\ntime  day ${t.day}  ${String(t.hh).padStart(2, '0')}:${String(t.mm).padStart(2, '0')}`;
+  }
   if (data.near) {
     lines += `\ndoor  ${data.near.name}  ${data.near.dist.toFixed(1)}u`;
   }

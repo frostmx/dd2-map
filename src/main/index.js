@@ -9,6 +9,8 @@ const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
 const { createTracker, floorOf } = require('./areaTracker');
 const { createLocalAreaReader } = require('./localAreaReader');
+const timeReader = require('./timeReader');
+const cameraFrameReader = require('./cameraFrameReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -146,6 +148,8 @@ let mainWindow;
 let readerHandle = null;
 let moduleBase = null;
 let pollTimer = null;
+let camTimer = null;       // the fast camera-frame loop (see startMemoryPolling)
+let frameOffsets = null;   // latest local->global offsets, written by the position poll
 
 let cfg = null;              // config/overlay.json, with defaults filled in
 let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
@@ -258,6 +262,8 @@ function rememberPlace() {
 // settles it. It lives here rather than in the tracker because the hotkeys are config,
 // and it's used twice — the console line and the overlay's readout — which have to agree.
 let lastHintId = null;
+let timeLogged = false;   // one boot-time "[time] resolved" line, not one per tick
+let camLogged = false;    // same, for the camera-frame feed
 function describeHint(h) {
   if (!h) return null;
   const keys = cfg.hotkeys;
@@ -494,6 +500,36 @@ function broadcast(channel, payload) {
 }
 
 function startMemoryPolling() {
+  // The camera feed runs on its own loop, separate from the 30Hz position poll: markers
+  // are glued to the world only as long as the projection uses the rotation the game is
+  // rendering with (at 30Hz a pan projects with a basis up to 33ms stale and every marker
+  // swims). Pinned to ~60Hz to MATCH the overlay's requestAnimationFrame render: a faster
+  // feed (120Hz) lands two samples per drawn frame at irregular phases, so the render
+  // keeps picking a different one each vsync — a beat frequency that reads as judder.
+  // One sample per frame is smooth. The reads are 6 small RPM calls — microseconds.
+  camTimer = setInterval(() => {
+    if (!readerHandle || !frameOffsets) return;
+    const camFrame = cameraFrameReader.read(readerHandle, moduleBase);
+    if (!camFrame) return;
+    broadcast('camera-frame', {
+      pos: [
+        camFrame.posLocal[0] + frameOffsets.x,
+        camFrame.posLocal[1] + frameOffsets.h,
+        camFrame.posLocal[2] + frameOffsets.y,
+      ],
+      right: camFrame.right,
+      up: camFrame.up,
+      fwd: camFrame.fwd,
+      fovDeg: camFrame.fovDeg,
+      aspect: camFrame.aspect,
+      near: camFrame.near,
+    });
+    if (!camLogged) {
+      camLogged = true;
+      console.log(`[camera] frame feed resolved: fov ${camFrame.fovDeg.toFixed(1)}°, aspect ${camFrame.aspect.toFixed(3)}`);
+    }
+  }, 16);   // ~60Hz, matched to the overlay's rAF render (see note above)
+
   pollTimer = setInterval(() => {
     try {
       if (!readerHandle) {
@@ -515,7 +551,10 @@ function startMemoryPolling() {
       const readGlobal = (staticOff, offs) => {
         const addr = resolvePointerChain(readerHandle, moduleBase + staticOff, offs);
         const buf = readMemory(readerHandle, addr, 12);
-        return { x: buf.readFloatLE(0), y: buf.readFloatLE(8) };
+        // h: the GLOBAL height. NOT identical to the local mirror's — the vertical axis
+        // rebases too (measured 2026-07-17: global 236.29 vs local 8.29, offset exactly
+        // 228.00). Anything mixing frames must offset height like x/y.
+        return { x: buf.readFloatLE(0), h: buf.readFloatLE(4), y: buf.readFloatLE(8) };
       };
       let g = null;
       try {
@@ -648,10 +687,24 @@ function startMemoryPolling() {
       }
       const place = tracker.place();
 
+      // Local->global frame offsets for the camera feed (all three axes rebase — the
+      // vertical has a floating origin too, measured 228.00u once; see readGlobal).
+      // They only change at cell crossings, so the fast camera loop below can reuse
+      // the latest values instead of re-reading the player chains at 120Hz.
+      frameOffsets = { x: g.x - localX, h: g.h - height, y: g.y - localY };
+
+      const gameTime = timeReader.read(readerHandle, moduleBase);
+      if (gameTime && !timeLogged) {
+        timeLogged = true;
+        console.log(`[time] in-game clock resolved: day ${gameTime.day}, `
+          + `${String(gameTime.hh).padStart(2, '0')}:${String(gameTime.mm).padStart(2, '0')}`);
+      }
+
       broadcast('game-position', {
         x: g.x,
         y: g.y,
-        height,
+        height,                 // LOCAL-frame height (floor learning depends on it — keep)
+        heightGlobal: g.h,      // GLOBAL-frame height, same frame as x/y and the POI data
         localX,
         localY,
         facing,                 // unit vector in GAME coords, or null (see CAMERA_*)
@@ -669,6 +722,9 @@ function startMemoryPolling() {
         placeName: place ? place.title : null,
         placeCategory: place ? place.category : null,
         hint,                   // what we're unsure about, and what settles it (or null)
+        // The in-game clock (app.TimeManager via the managed-singleton chain), or null.
+        // Freezes when the game pauses world time — that's the game's clock, not a bug.
+        gameTime: gameTime,
       });
     } catch (err) {
       // DD2.exe likely closed or the chain didn't resolve this tick — drop the
@@ -1004,7 +1060,7 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
 });
 
 // Overlay settings toggled from the control window: booleans plus the string mapStyle.
-const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud'];
+const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud', 'arTokens'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
   if (SETTING_KEYS.includes(key)) {
     cfg[key] = !!value;
@@ -1100,6 +1156,18 @@ ipcMain.handle('areas:metadata', (_event, meta) => {
 });
 
 ipcMain.handle('areas:load', () => areas);
+
+// The AR layer's POI set: Seeker's Token positions in game world coords, from gibbed's
+// Almanac dump vendored in data/almanac (see FINDINGS.md). Engine axes: x, y=height, z.
+ipcMain.handle('ar:pois:load', () => {
+  try {
+    const raw = JSON.parse(require('fs').readFileSync(
+      require('path').join(__dirname, '..', '..', 'data', 'almanac', '167.json'), 'utf-8'));
+    return Object.entries(raw.locations).map(([guid, p]) => ({ guid, x: p.x, h: p.y, y: p.z }));
+  } catch {
+    return [];   // no data file — the AR layer just draws nothing
+  }
+});
 
 // Seeds the shared inset scale/rotation from a 3-point calibration run inside one
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then
@@ -1222,6 +1290,7 @@ app.whenReady().then(() => {
 // half-disposed frame on the way out.
 app.on('before-quit', () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (camTimer) { clearInterval(camTimer); camTimer = null; }
   if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
 });
 
@@ -1233,6 +1302,7 @@ app.on('will-quit', () => {
 
 app.on('window-all-closed', () => {
   if (pollTimer) clearInterval(pollTimer);
+  if (camTimer) clearInterval(camTimer);
   if (inputTimer) clearInterval(inputTimer);
   if (readerHandle) closeHandle(readerHandle);
   if (process.platform !== 'darwin') app.quit();

@@ -13,6 +13,11 @@ contextBridge.exposeInMainWorld('dd2overlay', {
   // The windowed-mode box was moved/resized — persist it (screen fractions).
   saveWindowRect: (rect) => ipcRenderer.send('overlay:save-window-rect', rect),
 
+  // Camera basis + fov for the AR layer, ~30Hz. Position [x,h,y] is GLOBAL frame.
+  onCameraFrame: (callback) => ipcRenderer.on('camera-frame', (_event, data) => callback(data)),
+  // Seeker's Token world positions (game coords) for the AR layer.
+  loadArPois: () => ipcRenderer.invoke('ar:pois:load'),
+
   loadCalibration: () => ipcRenderer.invoke('calibration:load'),
   loadOverlayConfig: () => ipcRenderer.invoke('overlay:config:load'),
   saveOverlayConfig: (data) => ipcRenderer.invoke('overlay:config:save', data),

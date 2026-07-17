@@ -1,0 +1,54 @@
+{
+  "exe": "DD2.exe",
+  "tdbVersion": 73,
+  "vmGlobalRva": "0xf8cbce0",
+  "tdbOffsetInVm": "0x3618",
+  "staticTblOffsetInVm": "0x35d0",
+  "types": {
+    "app.GenerateManager": {
+      "typeIndex": 51182,
+      "holderTypeIndex": 22081,
+      "staticFieldSize": 112,
+      "instance": "0x552bbc40",
+      "instanceSlot": 8
+    },
+    "app.TimeManager": {
+      "typeIndex": 41725,
+      "holderTypeIndex": 19253,
+      "staticFieldSize": 104,
+      "instance": "0x55248430",
+      "instanceSlot": 8
+    },
+    "app.GimmickManager": {
+      "typeIndex": 13585,
+      "holderTypeIndex": 67089,
+      "staticFieldSize": 32,
+      "instance": "0x552a36d0",
+      "instanceSlot": 8
+    },
+    "app.CameraManager": {
+      "typeIndex": 8591,
+      "holderTypeIndex": 69190,
+      "staticFieldSize": 8,
+      "instanceSlot": 8
+    }
+  },
+  "cameraChain": {
+    "note": "Main render camera, structurally: CameraManager instance +0x10 (_CameraObjects, fixed array) +0x20 ([0] GameObject) +0x18 (Transform). Transform+0x80 = worldTransform 4x4 (rows right/up/fwd, row3 = CELL-LOCAL pos - use the global camera chain for position). Transform+0x18 (childComponent) = RECamera: near +0x30, far +0x34, fov +0x38, lookAtDistance +0x3c, aspect +0x44. Layouts from REFramework ReClass_Internal_DD2.hpp (MIT).",
+    "managerType": "app.CameraManager",
+    "instanceToGameObject": [
+      "0x10",
+      "0x20"
+    ],
+    "gameObjectToTransform": "0x18",
+    "worldTransform": "0x80",
+    "transformToCamera": "0x18",
+    "cameraFields": {
+      "near": "0x30",
+      "far": "0x34",
+      "fov": "0x38",
+      "lookAt": "0x3c",
+      "aspect": "0x44"
+    }
+  }
+}
