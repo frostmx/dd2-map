@@ -31,6 +31,10 @@
       "holderTypeIndex": 69190,
       "staticFieldSize": 8,
       "instanceSlot": 8
+    },
+    "app.Gm82_009": {
+      "typeIndex": 61564,
+      "note": "Not a singleton. The runtime component for a Golden Trove Beetle (and other gatherables). No instance/holder; the reader resolves its managed_vt live from TDB types[typeIndex]+0x40 to filter ManagedGimmicks. See beetleGimmickChain."
     }
   },
   "cameraChain": {
@@ -63,5 +67,22 @@
     "slotSize": 16,
     "slotLayout": { "hashCode": "0x00", "next": "0x04", "valuePtr": "0x08" },
     "boxedValueOffset": "0x10"
+  },
+  "beetleGimmickChain": {
+    "note": "Golden Trove Beetle collected-state, live per-session (nearby beetles only). GimmickManager instance +0x10+0x18 = ManagedGimmicks (HashSet<GimmickBase>, ~535 loaded gimmicks). Filter to beetles by managed_vt == app.Gm82_009's (resolved live from TDB types[61564]+0x40, since the vtable value moves each launch). A beetle is the Gm82_009 sitting within ~2u of a known almanac beetle position (161.json); other Gm82_009 are unrelated gatherables. Position: gimmick +0x10 (GameObject) +0x18 (Transform) +0x80 worldMatrix, row3 pos at +0xB0 (x@+0xB0, z@+0xB8), in CELL-LOCAL frame -> add the global-local frame offset (same offset index.js computes for the marker) to compare with almanac globals. Collected flag: BYTE at gimmick +0x3e4 == 1 (found by before/after byte-diff against a 0-drift alive baseline; 7 flags flip together on gather and all persist, 0x3e4 is one clean isolated one). Note Gm82_080 is the almanac's data-group id; Gm82_009 is the runtime component type.",
+    "beetleType": "app.Gm82_009",
+    "beetleTypeIndex": 61564,
+    "managedGimmicksFieldOffset": "0x18",
+    "hashSetSlotsFieldOffset": "0x08",
+    "hashSetCountFieldOffset": "0x20",
+    "slotsArrayDataOffset": "0x20",
+    "slotSize": 16,
+    "slotValuePtrOffset": "0x08",
+    "gimmickToGameObject": "0x10",
+    "gameObjectToTransform": "0x18",
+    "transformWorldMatrix": "0x80",
+    "worldMatrixPosRow": "0x30",
+    "collectedFlagOffset": "0x3e4",
+    "matchRadiusU": 2.5
   }
 }

@@ -12,6 +12,7 @@ const { createLocalAreaReader } = require('./localAreaReader');
 const timeReader = require('./timeReader');
 const cameraFrameReader = require('./cameraFrameReader');
 const generateManagerReader = require('./generateManagerReader');
+const gimmickReader = require('./gimmickReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -534,21 +535,31 @@ function startMemoryPolling() {
     }
   }, 16);   // ~60Hz, matched to the overlay's rAF render (see note above)
 
-  // Which AR tokens are already picked up: its own slow loop, decoupled from both
-  // feeds above. Collected-state changes at most a few times a session (see
-  // generateManagerReader.js), so this only reads and only sends when the set of
-  // GUIDs actually changed — same broadcast/onCommand channel as camera-frame.
+  // Which AR collectibles are already picked up: its own slow loop, decoupled from both
+  // feeds above. Collected-state changes at most a few times a session, so this only
+  // reads and only sends when the GUID set actually changed — same broadcast/onCommand
+  // channel as camera-frame. Two sources, unioned into one GUID set (the overlay filters
+  // arPois by guid regardless of kind):
+  //   - Seeker's Tokens: the global _NeverGenetateID HashSet (generateManagerReader).
+  //   - Golden Trove Beetles: per-gimmick flag on nearby loaded beetles (gimmickReader,
+  //     needs the live frame offset + the beetle POI list to bridge to almanac GUIDs).
   collectedTimer = setInterval(() => {
     if (!readerHandle) return;
-    const guids = generateManagerReader.read(readerHandle, moduleBase);
-    if (!guids) return;
+    const tokens = generateManagerReader.read(readerHandle, moduleBase);
+    if (!tokens) return; // the token read is the required baseline; skip the tick if it fails
+    const guids = new Set(tokens);
+    if (frameOffsets && arBeetlePois.length) {
+      const beetles = gimmickReader.read(
+        readerHandle, moduleBase, { x: frameOffsets.x, y: frameOffsets.y }, arBeetlePois);
+      if (beetles) for (const g of beetles) guids.add(g);
+    }
     if (lastCollectedGuids && guids.size === lastCollectedGuids.size
       && [...guids].every((g) => lastCollectedGuids.has(g))) return; // unchanged
     lastCollectedGuids = guids;
     broadcast('collected-tokens', { guids: [...guids] });
     if (!genLogged) {
       genLogged = true;
-      console.log(`[collect] never-generate set resolved: ${guids.size} GUID(s) tracked`);
+      console.log(`[collect] collected set resolved: ${guids.size} GUID(s) (tokens+beetles)`);
     }
   }, cfg.ar.collectedPollMs);
 
@@ -1082,7 +1093,7 @@ ipcMain.on('overlay:number', (_event, { key, value }) => {
 });
 
 // Overlay settings toggled from the control window: booleans plus the string mapStyle.
-const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud', 'arTokens'];
+const SETTING_KEYS = ['autoZoom', 'hideFound', 'rotateWithHeading', 'areaHud', 'arCollectibles'];
 ipcMain.on('overlay:setting', (_event, { key, value }) => {
   if (SETTING_KEYS.includes(key)) {
     cfg[key] = !!value;
@@ -1179,17 +1190,28 @@ ipcMain.handle('areas:metadata', (_event, meta) => {
 
 ipcMain.handle('areas:load', () => areas);
 
-// The AR layer's POI set: Seeker's Token positions in game world coords, from gibbed's
-// Almanac dump vendored in data/almanac (see FINDINGS.md). Engine axes: x, y=height, z.
-ipcMain.handle('ar:pois:load', () => {
+// The AR layer's POI set: collectible positions in game world coords, from gibbed's
+// Almanac dumps vendored in data/almanac (see FINDINGS.md). Engine axes: x, y=height, z,
+// so each entry becomes { x, h: y, y: z } plus a `kind` for the overlay's marker style.
+// 167 = Seeker's Tokens, 161 = Golden Trove Beetles.
+const AR_POI_FILES = [
+  { file: '167.json', kind: 'token' },
+  { file: '161.json', kind: 'beetle' },
+];
+function loadArPoiFile(file, kind) {
   try {
     const raw = JSON.parse(require('fs').readFileSync(
-      require('path').join(__dirname, '..', '..', 'data', 'almanac', '167.json'), 'utf-8'));
-    return Object.entries(raw.locations).map(([guid, p]) => ({ guid, x: p.x, h: p.y, y: p.z }));
+      require('path').join(__dirname, '..', '..', 'data', 'almanac', file), 'utf-8'));
+    return Object.entries(raw.locations).map(([guid, p]) => ({ guid, kind, x: p.x, h: p.y, y: p.z }));
   } catch {
-    return [];   // no data file — the AR layer just draws nothing
+    return [];   // no data file — that kind just doesn't draw
   }
-});
+}
+ipcMain.handle('ar:pois:load', () => AR_POI_FILES.flatMap(({ file, kind }) => loadArPoiFile(file, kind)));
+
+// Beetle POIs kept main-side too: gimmickReader needs them (in {guid, x, y=engine-z}
+// form) to bridge a nearby loaded beetle gimmick's position back to its almanac GUID.
+const arBeetlePois = loadArPoiFile('161.json', 'beetle').map((p) => ({ guid: p.guid, x: p.x, y: p.y }));
 
 // Seeds the shared inset scale/rotation from a 3-point calibration run inside one
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then

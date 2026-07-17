@@ -1338,8 +1338,10 @@ The AR canvas (`#arCanvas`, `z-index: 10`, `pointer-events: none`) sits above th
 
 ### Config: `overlay.json → ar` — code/JSON tuning, never UI-authored
 
-`arTokens` (checkbox, default on) is the only AR setting exposed in the control window;
-everything else is a knob in `overlayConfig.js DEFAULTS.ar`, merged like `hotkeys` so a
+`arCollectibles` (checkbox, default on — renamed from `arTokens`, which `load()` still
+honours for upgraders) is the only AR setting exposed in the control window; it toggles
+both tokens and beetles together. Everything else is a knob in `overlayConfig.js
+DEFAULTS.ar`, merged like `hotkeys` so a
 saved file predating a new knob doesn't shadow its default (`ar: {...DEFAULTS.ar,
 ...saved.ar}`). **The reverse trap was live and is now closed**: `save()` used to persist
 the *merged* config, so the first UI checkbox toggle would have frozen the entire `ar`
@@ -1354,11 +1356,13 @@ don't retune by feel), `floatU`/`floatFadeU` (1.6/8, cosmetic), `interpMs` (24, 
 
 ### Data source
 
-`data/almanac/167.json` (Seeker's Tokens, vendored — see the ground-truth section above)
-loaded once via `ar:pois:load` IPC into `{guid, x, h, y}` triples (engine axes, no
-conversion needed — matches the position feed's convention directly). This list is
-static for the session; collected-state filtering (below) happens at render time
-against a separately-pushed live set, not by re-fetching this list.
+`data/almanac/167.json` (Seeker's Tokens) and `161.json` (Golden Trove Beetles), both
+vendored — see the ground-truth section above — loaded once via `ar:pois:load` IPC into
+`{guid, kind, x, h, y}` triples (engine axes, no conversion needed — matches the position
+feed's convention directly), `kind` driving the marker style: `'token'` = green circle,
+`'beetle'` = yellow diamond, `'chest'` = blue square (chests not wired as POIs yet).
+This list is static for the session; collected-state filtering (below) happens at render
+time against a separately-pushed live set, not by re-fetching this list.
 
 ### Collected-token filtering — SHIPPED (`src/main/generateManagerReader.js`, 2026-07-17)
 
@@ -1393,11 +1397,13 @@ raw 16-byte `Guid`, decoded with .NET's real byte order (Data1/Data2/Data3
 little-endian, Data4 raw) to match `data/almanac/*.json`'s string keys. Full chain
 recorded in `config/singletons.json`'s `neverGenerateChain` block.
 
-**It is not tokens-only.** On the save it was read from, the set held 394 GUIDs; only
-71 matched known token IDs. `GenerateManager` apparently uses this one set for every
-"never regenerate" collectible (beetles, chests, ...), not tokens exclusively — a caller
-must intersect against its own known-GUID list, which `generateManagerReader.js` and the
-AR filter both do implicitly (the almanac token list only ever supplies token GUIDs).
+**It is not tokens-only, but it is NOT beetles either.** On the save it was read from,
+the set held ~396 GUIDs; only ~71 matched known token IDs, and **zero** matched the 78
+Golden Trove Beetle GUIDs. So `_NeverGenetateID` is a broader "never respawn this rolled
+id" record (the ~320 others match no vendored almanac file at all); tokens just happen to
+also be gated by it. A caller must intersect against its own known-GUID list, which
+`generateManagerReader.js` and the AR filter do implicitly (the almanac token list only
+supplies token GUIDs). Beetles needed an entirely different mechanism — see below.
 
 **Wiring:** `src/main/index.js` polls this on its own timer (`ar.collectedPollMs`,
 default 3s) — deliberately decoupled from the 30Hz position poll and the 60Hz camera
@@ -1405,8 +1411,57 @@ feed, since collected-state changes at most a few times per session. It diffs ag
 the last-broadcast set and only sends `collected-tokens` (same generic
 `broadcast`/`onCommand` channel as `camera-frame`) when it actually changed. The overlay
 (`overlay.js`) keeps a `collectedGuids` `Set` and skips matching POIs in the AR render
-loop — `arPois` itself is never re-fetched, so a token collected mid-session drops out
-without needing a reload.
+loop — `arPois` itself is never re-fetched, so a collectible picked up mid-session drops
+out without needing a reload. (The same timer now also unions in collected beetles.)
+
+### Golden Trove Beetle collected-state — SHIPPED (`src/main/gimmickReader.js`, 2026-07-17)
+
+Beetles are the second AR collectible, and their collected-state is nothing like tokens'.
+It is **per-gimmick and local** — read off the live beetle object in the world, so it only
+resolves for beetles currently streamed in near the player. That's exactly the AR layer's
+regime (radius-limited), so it's the right tradeoff; a beetle the game hasn't loaded just
+keeps its marker until you get close.
+
+The path, all found live by walking `app.GimmickManager` (already singleton-resolved) and
+byte-diffing (`config/singletons.json` `beetleGimmickChain` has the offsets):
+
+- **What a beetle *is*.** The runtime component is `app.Gm82_009` (NOT `Gm82_080` — that's
+  the almanac's data-group id; the runtime component type differs). Its own fields are a
+  giveaway: `GatherContext`/`GatherNum`/`OnGatherItem`/`IsGivedItem` (it's a gatherable)
+  plus a pile of light fields (`PointLight`, `EmissiveTimer`, `MoonLightEff`, `TurnOn`) —
+  it's a *glowing* gatherable. `Gm82_009` is generic: several unrelated gatherables share
+  it, so a beetle is specifically a `Gm82_009` sitting within ~2.5u of a known almanac
+  beetle position. The others (28–62u away) are not beetles.
+- **Finding it.** `GimmickManager` instance `+0x10+0x18` → `ManagedGimmicks`
+  (`HashSet<GimmickBase>`, ~535 loaded gimmicks, same HashSet layout as `_NeverGenetateID`).
+  Filter to `Gm82_009` by vtable — but the vtable *value* moves each launch, so it's
+  resolved fresh from the TDB (`types[61564] + 0x40`), not stored.
+- **Its world position** (to bridge to an almanac GUID): `gimmick +0x10` (GameObject)
+  `+0x18` (Transform) `+0x80` (worldMatrix) `+0x30` (row3 = pos: x@+0, z@+8). This is in
+  the **cell-local floating-origin frame** — add the same global−local offset the marker
+  feed uses and it matches an almanac beetle to **0.00u**. (The missing GameObject→Transform
+  indirection is why an early position scan found nothing; `gimmick+0x10` is the GameObject,
+  not the Transform.)
+- **The collected flag: byte at `gimmick +0x3e4 == 1`.** Found by snapshotting one beetle
+  before/after gathering it. The key was a **0-drift alive baseline**: a first attempt
+  diffed snapshots minutes apart and got fooled by a continuously-updating light/timer
+  float at `+0x3f8` (and by a co-located lantern of a *different* type — the reason the
+  first suspected type, the light gimmick, was wrong). Snapshotting the same beetle twice
+  while alive showed exactly which bytes self-drift (`+0x3f8..+0x3fb`); excluding those, a
+  gather flips **7 booleans together** (`0x36a,0x36b,0x370,0x374,0x3e4,0x407,0x40a`), all
+  of which **persist** with no post-gather revert. `0x3e4` is the one the reader uses.
+  Verified end-to-end: of 10 loaded `Gm82_009`, exactly the one just gathered reads the
+  flag and maps to its almanac GUID.
+
+**Wiring:** the same `collectedTimer` calls `gimmickReader.read(handle, moduleBase,
+frameOffset, beetlePois)` and unions the returned beetle GUIDs into the token set before
+the diff/broadcast — one `collected-tokens` message carries both, and the overlay filters
+`arPois` by GUID regardless of kind. Beetle POIs are cached main-side (`arBeetlePois`)
+because the reader needs them to turn a nearby gimmick's position back into an almanac GUID.
+
+**Not yet verified:** whether a beetle gathered in a *previous* session loads pre-flagged
+when re-streamed (the thing that makes startup-filtering work across sessions). Collecting
+one live in-session is confirmed; the cross-session case awaits an in-game check.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +

@@ -776,12 +776,12 @@ window.dd2overlay.onGamePosition((data) => {
   pushZoomTarget();
 });
 
-// --- AR token layer -----------------------------------------------------------
-// Seeker's Tokens projected to WHERE THE TOKEN IS on screen, through the game
-// camera's own basis and fov (the `camera-frame` feed). Active in every F9 mode
-// while the arTokens setting is on. No occlusion — markers glow through walls,
-// which is the point of a finder. Off-screen tokens clamp to the border as
-// outward-pointing arrows instead of vanishing.
+// --- AR collectible layer -----------------------------------------------------
+// Seeker's Tokens (green circles) and Golden Trove Beetles (yellow diamonds) projected
+// to WHERE THE COLLECTIBLE IS on screen, through the game camera's own basis and fov (the
+// `camera-frame` feed). Active in every F9 mode while the arCollectibles setting is
+// on. No occlusion — markers glow through walls, which is the point of a finder.
+// Off-screen ones clamp to the border as outward-pointing arrows instead of vanishing.
 //
 // Axes: every vector here is engine [x, height, y] — positions from the feed, the
 // basis rows, and the POI table all agree, so a dot product needs no shuffling.
@@ -839,7 +839,7 @@ function arSampleCamera(renderTime) {
 function arActive() {
   // Every F9 mode: the AR canvas sits above the map webview (z-index), so tokens show
   // over the game in icons mode and over the map in the full-map/windowed modes too.
-  return cfg && cfg.arTokens !== false && arCamCurr && arPlayer && arPois.length;
+  return cfg && cfg.arCollectibles !== false && arCamCurr && arPlayer && arPois.length;
 }
 
 function arLoop() {
@@ -923,6 +923,7 @@ function arLoop() {
       dist: distPlayer,
       clamped,
       angle: clamped ? Math.atan2(-ndcY, ndcX) : 0,   // outward direction, screen space
+      kind: p.kind || 'token',
     });
   }
   // On-screen markers all draw; edge markers are capped to the nearest few so a dense
@@ -930,6 +931,32 @@ function arLoop() {
   const onScreen = items.filter((i) => !i.clamped).sort((a, b) => b.dist - a.dist);
   const edgeItems = items.filter((i) => i.clamped).sort((a, b) => a.dist - b.dist).slice(0, edgeMax);
   const draw = [...edgeItems, ...onScreen];
+
+  // Marker style per collectible kind — colour AND shape, so each reads at a glance:
+  //   token  = green circle (it's a coin)   beetle = yellow diamond (golden beetle)
+  //   chest  = blue square                  (chests not wired as POIs yet; ready for them)
+  const KIND_STYLE = {
+    token: { color: '#4ade80', shape: 'circle' },
+    beetle: { color: '#ffd24a', shape: 'diamond' },
+    chest: { color: '#4aa3ff', shape: 'square' },
+  };
+  const styleFor = (k) => KIND_STYLE[k] || KIND_STYLE.token;
+  // Trace the marker shape into the current path, centred at (x,y) with radius ~size.
+  const shapePath = (shape, x, y, size) => {
+    ctx.beginPath();
+    if (shape === 'circle') {
+      ctx.arc(x, y, size * 0.85, 0, Math.PI * 2);
+    } else if (shape === 'square') {
+      const s = size * 0.8;
+      ctx.rect(x - s, y - s, s * 2, s * 2);
+    } else { // diamond
+      ctx.moveTo(x, y - size);
+      ctx.lineTo(x + size * 0.7, y);
+      ctx.lineTo(x, y + size);
+      ctx.lineTo(x - size * 0.7, y);
+      ctx.closePath();
+    }
+  };
 
   for (const it of draw) {
     if (it.clamped) {
@@ -943,7 +970,7 @@ function arLoop() {
       ctx.lineTo(-sz * 0.7, sz * 0.85);
       ctx.lineTo(-sz * 0.7, -sz * 0.85);
       ctx.closePath();
-      ctx.fillStyle = '#ffd24a';
+      ctx.fillStyle = styleFor(it.kind).color;
       ctx.strokeStyle = 'rgba(0,0,0,0.85)';
       ctx.lineWidth = 2;
       ctx.fill();
@@ -966,14 +993,10 @@ function arLoop() {
     }
     const size = Math.max(12, Math.min(56, markerPx * 80 / Math.max(10, it.dist)));
     const alpha = Math.max(0.35, 1 - it.dist / (radius * 1.2));
+    const st = styleFor(it.kind);
     ctx.globalAlpha = alpha;
-    ctx.beginPath();                        // a diamond
-    ctx.moveTo(it.sx, it.sy - size);
-    ctx.lineTo(it.sx + size * 0.7, it.sy);
-    ctx.lineTo(it.sx, it.sy + size);
-    ctx.lineTo(it.sx - size * 0.7, it.sy);
-    ctx.closePath();
-    ctx.fillStyle = '#ffd24a';
+    shapePath(st.shape, it.sx, it.sy, size);
+    ctx.fillStyle = st.color;
     ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.lineWidth = 2;
     ctx.fill();

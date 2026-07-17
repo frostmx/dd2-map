@@ -175,7 +175,7 @@ wireCheckbox('autoZoom', 'autoZoom');
 wireCheckbox('hideFound', 'hideFound');
 wireCheckbox('rotateWithHeading', 'rotateWithHeading');
 wireCheckbox('areaHud', 'areaHud');
-wireCheckbox('arTokens', 'arTokens');
+wireCheckbox('arCollectibles', 'arCollectibles');
 
 // Overlay map style: Full color (mapgenie's raster) vs Edge (our art baked from the game's
 // textures). Edge is only offered once art has been generated into userData/edge — until

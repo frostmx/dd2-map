@@ -27,10 +27,11 @@ const DEFAULTS = {
   // true = start icons-only (what you play with); false = start on the full map.
   openIconsOnly: true,
 
-  // The AR token layer (icons-only mode): Seeker's Token markers projected to WHERE THE
-  // TOKEN IS in 3D, through the game's own camera basis and fov. arTokens is the on/off
-  // (a control-window checkbox); the knobs decide how it feels.
-  arTokens: true,
+  // The AR collectible layer: Seeker's Token and Golden Trove Beetle markers projected
+  // to WHERE THE COLLECTIBLE IS in 3D, through the game's own camera basis and fov.
+  // arCollectibles is the on/off (a control-window checkbox, covering both kinds); the
+  // knobs below decide how it feels. (Renamed from arTokens — load() migrates the old key.)
+  arCollectibles: true,
   ar: {
     radiusU: 200,     // draw tokens within this many game units of the player (a sphere)
     markerPx: 14,     // marker size at ~40u; scales with distance, clamped 6..28 px
@@ -190,9 +191,14 @@ const DEFAULTS = {
 
 function load() {
   const saved = store.load('overlay') || {};
+  // arTokens was renamed to arCollectibles (now covers beetles too). Honour a user's old
+  // saved value so someone who turned the layer OFF doesn't get it back on after upgrade.
+  const arCollectibles = saved.arCollectibles !== undefined ? saved.arCollectibles
+    : (saved.arTokens !== undefined ? saved.arTokens : DEFAULTS.arCollectibles);
   return {
     ...DEFAULTS,
     ...saved,
+    arCollectibles,
     hotkeys: { ...DEFAULTS.hotkeys, ...(saved.hotkeys || {}) },
     // Nested like hotkeys: a saved `ar` block must not shadow defaults for knobs it
     // predates (e.g. heightOffsetU), or the new knob silently reverts to undefined.
