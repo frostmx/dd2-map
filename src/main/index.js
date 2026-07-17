@@ -12,7 +12,7 @@ const { createLocalAreaReader } = require('./localAreaReader');
 const timeReader = require('./timeReader');
 const cameraFrameReader = require('./cameraFrameReader');
 const generateManagerReader = require('./generateManagerReader');
-const gimmickReader = require('./gimmickReader');
+const contextDbReader = require('./contextDbReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -539,18 +539,18 @@ function startMemoryPolling() {
   // feeds above. Collected-state changes at most a few times a session, so this only
   // reads and only sends when the GUID set actually changed — same broadcast/onCommand
   // channel as camera-frame. Two sources, unioned into one GUID set (the overlay filters
-  // arPois by guid regardless of kind):
-  //   - Seeker's Tokens: the global _NeverGenetateID HashSet (generateManagerReader).
-  //   - Golden Trove Beetles: per-gimmick flag on nearby loaded beetles (gimmickReader,
-  //     needs the live frame offset + the beetle POI list to bridge to almanac GUIDs).
+  // arPois by guid regardless of kind), both GLOBAL/persistent (near or far, survive reload):
+  //   - Seeker's Tokens: the _NeverGenetateID HashSet (generateManagerReader).
+  //   - Golden Trove Beetles: the save-wide ContextDB (contextDbReader), intersected with
+  //     the known beetle GUIDs. NOT the live gimmick — a collected beetle doesn't respawn
+  //     one, so only the ContextDB knows (see contextDbReader.js / FINDINGS.md).
   collectedTimer = setInterval(() => {
     if (!readerHandle) return;
     const tokens = generateManagerReader.read(readerHandle, moduleBase);
     if (!tokens) return; // the token read is the required baseline; skip the tick if it fails
     const guids = new Set(tokens);
-    if (frameOffsets && arBeetlePois.length) {
-      const beetles = gimmickReader.read(
-        readerHandle, moduleBase, { x: frameOffsets.x, y: frameOffsets.y }, arBeetlePois);
+    if (arBeetleGuids.size) {
+      const beetles = contextDbReader.read(readerHandle, moduleBase, arBeetleGuids);
       if (beetles) for (const g of beetles) guids.add(g);
     }
     if (lastCollectedGuids && guids.size === lastCollectedGuids.size
@@ -1209,9 +1209,10 @@ function loadArPoiFile(file, kind) {
 }
 ipcMain.handle('ar:pois:load', () => AR_POI_FILES.flatMap(({ file, kind }) => loadArPoiFile(file, kind)));
 
-// Beetle POIs kept main-side too: gimmickReader needs them (in {guid, x, y=engine-z}
-// form) to bridge a nearby loaded beetle gimmick's position back to its almanac GUID.
-const arBeetlePois = loadArPoiFile('161.json', 'beetle').map((p) => ({ guid: p.guid, x: p.x, y: p.y }));
+// Beetle GUIDs kept main-side too: contextDbReader intersects the ContextDB's collected
+// set against these (lowercase), so only known beetles come back — the almanac's other
+// kinds never do. Same idea as the token filter's implicit intersection.
+const arBeetleGuids = new Set(loadArPoiFile('161.json', 'beetle').map((p) => p.guid.toLowerCase()));
 
 // Seeds the shared inset scale/rotation from a 3-point calibration run inside one
 // dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then

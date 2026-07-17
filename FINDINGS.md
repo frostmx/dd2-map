@@ -1414,54 +1414,57 @@ the last-broadcast set and only sends `collected-tokens` (same generic
 loop — `arPois` itself is never re-fetched, so a collectible picked up mid-session drops
 out without needing a reload. (The same timer now also unions in collected beetles.)
 
-### Golden Trove Beetle collected-state — SHIPPED (`src/main/gimmickReader.js`, 2026-07-17)
+### Golden Trove Beetle collected-state — SHIPPED (`src/main/contextDbReader.js`, 2026-07-17)
 
-Beetles are the second AR collectible, and their collected-state is nothing like tokens'.
-It is **per-gimmick and local** — read off the live beetle object in the world, so it only
-resolves for beetles currently streamed in near the player. That's exactly the AR layer's
-regime (radius-limited), so it's the right tradeoff; a beetle the game hasn't loaded just
-keeps its marker until you get close.
+Beetles are the second AR collectible, and their collected-state comes from the game's
+**persistent, save-wide ContextDB** — global like tokens' `_NeverGenetateID`, not the live
+world. `config/singletons.json` `beetleContextChain` has every offset.
 
-The path, all found live by walking `app.GimmickManager` (already singleton-resolved) and
-byte-diffing (`config/singletons.json` `beetleGimmickChain` has the offsets):
+**Why not the live beetle gimmick (a dead end worth recording).** The first attempt read
+a per-gimmick flag off the loaded beetle object (`app.Gm82_009`, found in
+`GimmickManager.ManagedGimmicks`, matched to an almanac GUID by world position; a gather
+flips a cluster of bytes incl. `+0x3e4`). It worked *in the moment you gathered a beetle*
+— and then failed the real test: **a collected beetle does not respawn a gimmick.** Reload
+a save and a gathered beetle simply isn't created in the world, so there is no object to
+read a flag off, and its marker draws forever. A live-gimmick signal can only ever hide
+beetles you're standing next to *and haven't collected yet* — useless for a finder. The
+lesson: collected-state that must survive reload lives in the save/ContextDB, never on a
+streamed gimmick. (Two false starts along the way: a light/timer float at `+0x3f8` that
+self-drifts with the day/night clock, and a co-located *lantern* gimmick of a different
+type — both dodged by diffing a **0-drift alive baseline** of the exact object.)
 
-- **What a beetle *is*.** The runtime component is `app.Gm82_009` (NOT `Gm82_080` — that's
-  the almanac's data-group id; the runtime component type differs). Its own fields are a
-  giveaway: `GatherContext`/`GatherNum`/`OnGatherItem`/`IsGivedItem` (it's a gatherable)
-  plus a pile of light fields (`PointLight`, `EmissiveTimer`, `MoonLightEff`, `TurnOn`) —
-  it's a *glowing* gatherable. `Gm82_009` is generic: several unrelated gatherables share
-  it, so a beetle is specifically a `Gm82_009` sitting within ~2.5u of a known almanac
-  beetle position. The others (28–62u away) are not beetles.
-- **Finding it.** `GimmickManager` instance `+0x10+0x18` → `ManagedGimmicks`
-  (`HashSet<GimmickBase>`, ~535 loaded gimmicks, same HashSet layout as `_NeverGenetateID`).
-  Filter to `Gm82_009` by vtable — but the vtable *value* moves each launch, so it's
-  resolved fresh from the TDB (`types[61564] + 0x40`), not stored.
-- **Its world position** (to bridge to an almanac GUID): `gimmick +0x10` (GameObject)
-  `+0x18` (Transform) `+0x80` (worldMatrix) `+0x30` (row3 = pos: x@+0, z@+8). This is in
-  the **cell-local floating-origin frame** — add the same global−local offset the marker
-  feed uses and it matches an almanac beetle to **0.00u**. (The missing GameObject→Transform
-  indirection is why an early position scan found nothing; `gimmick+0x10` is the GameObject,
-  not the Transform.)
-- **The collected flag: byte at `gimmick +0x3e4 == 1`.** Found by snapshotting one beetle
-  before/after gathering it. The key was a **0-drift alive baseline**: a first attempt
-  diffed snapshots minutes apart and got fooled by a continuously-updating light/timer
-  float at `+0x3f8` (and by a co-located lantern of a *different* type — the reason the
-  first suspected type, the light gimmick, was wrong). Snapshotting the same beetle twice
-  while alive showed exactly which bytes self-drift (`+0x3f8..+0x3fb`); excluding those, a
-  gather flips **7 booleans together** (`0x36a,0x36b,0x370,0x374,0x3e4,0x407,0x40a`), all
-  of which **persist** with no post-gather revert. `0x3e4` is the one the reader uses.
-  Verified end-to-end: of 10 loaded `Gm82_009`, exactly the one just gathered reads the
-  flag and maps to its almanac GUID.
+**The ContextDB walk** mirrors what `gibbed_Almanac.lua` does with managed calls, done
+out-of-process (fetched the mod to get the chain right). `app.ContextDBMS` is a resolved
+singleton; from it:
 
-**Wiring:** the same `collectedTimer` calls `gimmickReader.read(handle, moduleBase,
-frameOffset, beetlePois)` and unions the returned beetle GUIDs into the token set before
-the diff/broadcast — one `collected-tokens` message carries both, and the overlay filters
-`arPois` by GUID regardless of kind. Beetle POIs are cached main-side (`arBeetlePois`)
-because the reader needs them to turn a nearby gimmick's position back into an almanac GUID.
+- `ContextDBMS +0x10+0x08` → `OfflineDB` (== `CurrentDB` in single-player), a
+  `ContextDatabase`.
+- `ContextDatabase +0x10+0x18` → `IndexCreator` (`app.TowerContextDatabaseIndexCreator`);
+  `+0x10+0x00` → `UniqueID2Keys`, a `Dictionary<UniqueID, ContextDatabaseKey>`. Entries at
+  `(dict+0x10+0x08 → array)+0x20`, **stride 24**, `{hashCode:i32, next:i32, keyPtr@0x08,
+  valuePtr@0x10}`. The key is a `UniqueID` *object* — its `_RowID` Guid is at `key+0x10`
+  (this is why searching for the raw GUID inline failed: the dict is keyed by object ref,
+  Guid one level down). The value is a `ContextDatabaseKey`; `+0x10+0x00` = `KeyForSystem`
+  (an int index).
+- `ContextDatabase +0x10+0x08` → `Records` (`List<RecordInfo>`); `Records._items+0x20`,
+  `[KeyForSystem]` → `RecordInfo`; `+0x10+0x08` → the `ContextDatabaseRecord`.
+- `ContextDatabaseRecord +0x10+0x00` → `Contexts` (a `List`); iterate `_items` and pick the
+  element whose vtable is `app.GatherContext`'s (resolved live from `types[74683]+0x40` —
+  the vtable value moves each launch).
+- **`GatherContext` byte `+0x28`: `0` = collected, `1` = available.** Confirmed twice: it
+  flips `1→0` on gather, and loading a save with the beetle *alive* flips it back `0→1`.
 
-**Not yet verified:** whether a beetle gathered in a *previous* session loads pre-flagged
-when re-streamed (the thing that makes startup-filtering work across sessions). Collecting
-one live in-session is confirmed; the cross-session case awaits an in-game check.
+A beetle GUID absent from `UniqueID2Keys` was simply never approached → treated as
+uncollected. Validated end-to-end against a real save: **42 of 78 collected, 19 available,
+17 not-in-DB**, tracking the live save state as beetles are gathered/reloaded — with no
+gimmick loaded.
+
+**Wiring:** `collectedTimer` calls `contextDbReader.read(handle, moduleBase, arBeetleGuids)`
+and unions the collected beetle GUIDs into the token set before the diff/broadcast — one
+`collected-tokens` message carries both, the overlay filters `arPois` by GUID regardless of
+kind. `arBeetleGuids` (main-side) is just the known beetle GUID set, used to intersect the
+ContextDB result down to beetles (the DB holds every gatherable). No position or frame
+offset needed — the state is global.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +

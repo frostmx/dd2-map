@@ -32,9 +32,19 @@
       "staticFieldSize": 8,
       "instanceSlot": 8
     },
+    "app.ContextDBMS": {
+      "typeIndex": 28169,
+      "holderTypeIndex": 22859,
+      "instanceSlot": 8,
+      "note": "Managed singleton: the persistent context database. Holds every collectible's save-wide state. See beetleContextChain."
+    },
     "app.Gm82_009": {
       "typeIndex": 61564,
-      "note": "Not a singleton. The runtime component for a Golden Trove Beetle (and other gatherables). No instance/holder; the reader resolves its managed_vt live from TDB types[typeIndex]+0x40 to filter ManagedGimmicks. See beetleGimmickChain."
+      "note": "The runtime component for a Golden Trove Beetle (a glowing gatherable; Gm82_080 is the almanac's data-group id). NOT used for collected-state — a collected beetle doesn't respawn a gimmick, so its state comes from the ContextDB (see beetleContextChain). Kept for reference."
+    },
+    "app.GatherContext": {
+      "typeIndex": 74683,
+      "note": "Not a singleton. The per-collectible gather record inside a ContextDatabaseRecord. The reader resolves its managed_vt live from TDB types[typeIndex]+0x40 to pick it out of a record's Contexts list. Collected iff byte +0x28 == 0. See beetleContextChain."
     }
   },
   "cameraChain": {
@@ -68,21 +78,29 @@
     "slotLayout": { "hashCode": "0x00", "next": "0x04", "valuePtr": "0x08" },
     "boxedValueOffset": "0x10"
   },
-  "beetleGimmickChain": {
-    "note": "Golden Trove Beetle collected-state, live per-session (nearby beetles only). GimmickManager instance +0x10+0x18 = ManagedGimmicks (HashSet<GimmickBase>, ~535 loaded gimmicks). Filter to beetles by managed_vt == app.Gm82_009's (resolved live from TDB types[61564]+0x40, since the vtable value moves each launch). A beetle is the Gm82_009 sitting within ~2u of a known almanac beetle position (161.json); other Gm82_009 are unrelated gatherables. Position: gimmick +0x10 (GameObject) +0x18 (Transform) +0x80 worldMatrix, row3 pos at +0xB0 (x@+0xB0, z@+0xB8), in CELL-LOCAL frame -> add the global-local frame offset (same offset index.js computes for the marker) to compare with almanac globals. Collected flag: BYTE at gimmick +0x3e4 == 1 (found by before/after byte-diff against a 0-drift alive baseline; 7 flags flip together on gather and all persist, 0x3e4 is one clean isolated one). Note Gm82_080 is the almanac's data-group id; Gm82_009 is the runtime component type.",
-    "beetleType": "app.Gm82_009",
-    "beetleTypeIndex": 61564,
-    "managedGimmicksFieldOffset": "0x18",
-    "hashSetSlotsFieldOffset": "0x08",
-    "hashSetCountFieldOffset": "0x20",
-    "slotsArrayDataOffset": "0x20",
-    "slotSize": 16,
-    "slotValuePtrOffset": "0x08",
-    "gimmickToGameObject": "0x10",
-    "gameObjectToTransform": "0x18",
-    "transformWorldMatrix": "0x80",
-    "worldMatrixPosRow": "0x30",
-    "collectedFlagOffset": "0x3e4",
-    "matchRadiusU": 2.5
+  "beetleContextChain": {
+    "note": "Golden Trove Beetle collected-state, PERSISTENT and global (near or far, survives reload) — the beetle equivalent of tokens' _NeverGenetateID, and what gibbed's gibbed_Almanac.lua uses. A live-gimmick approach was tried first and abandoned: a COLLECTED beetle does not respawn a gimmick at all, so there's no object to read — collected-state has to come from the save-wide ContextDB. The out-of-process walk mirrors the mod's managed calls: ContextDBMS instance +0x10+0x08 = OfflineDB (== CurrentDB in single-player, a ContextDatabase). ContextDatabase +0x10+0x18 = IndexCreator (app.TowerContextDatabaseIndexCreator). IndexCreator +0x10+0x00 = UniqueID2Keys (Dictionary<UniqueID, ContextDatabaseKey>): _entries at (dict+0x10+0x08 -> array)+0x20, stride 24, entry {hashCode:i32@0, next:i32@4, keyPtr@0x08, valuePtr@0x10}; the keyPtr is a UniqueID object whose _RowID Guid is at key+0x10 (16 bytes, .NET byte order), the valuePtr is the ContextDatabaseKey. ContextDatabaseKey +0x10+0x00 = KeyForSystem (i32 index). ContextDatabase +0x10+0x08 = Records (List<RecordInfo>): Records._items+0x20, [KeyForSystem]*8 -> RecordInfo. RecordInfo +0x10+0x08 = the ContextDatabaseRecord (its <Record> backing field). ContextDatabaseRecord +0x10+0x00 = Contexts (List of context objects): iterate _items, pick the element whose vtable == app.GatherContext's managed_vt (resolved live from TDB types[74683]+0x40). GatherContext BYTE +0x28: 0 = collected, 1 = available (verified by before/after gather diff AND by loading a save with the beetle alive -> flips back to 1). A beetle GUID absent from UniqueID2Keys just means never approached -> treat as uncollected.",
+    "manager": "app.ContextDBMS",
+    "gatherContextType": "app.GatherContext",
+    "gatherContextTypeIndex": 74683,
+    "dbmsToDatabase": "0x08",
+    "databaseToIndexCreator": "0x18",
+    "databaseToRecords": "0x08",
+    "indexCreatorToUniqueID2Keys": "0x00",
+    "dictEntriesFieldOffset": "0x08",
+    "dictCountFieldOffset": "0x20",
+    "dictEntriesDataOffset": "0x20",
+    "dictEntryStride": 24,
+    "dictEntryKeyPtr": "0x08",
+    "dictEntryValuePtr": "0x10",
+    "uniqueIdRowIdOffset": "0x10",
+    "keyForSystemOffset": "0x00",
+    "recordsItemsDataOffset": "0x20",
+    "recordInfoToRecord": "0x08",
+    "recordToContexts": "0x00",
+    "listItemsFieldOffset": "0x00",
+    "listCountFieldOffset": "0x08",
+    "listItemsDataOffset": "0x20",
+    "gatherCollectedByteOffset": "0x28"
   }
 }
