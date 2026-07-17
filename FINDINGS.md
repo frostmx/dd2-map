@@ -1429,6 +1429,9 @@ because neither alone is complete — a subtle but important split:
 
 Union them and a gathered beetle's marker disappears immediately **and** stays gone across
 reloads. `config/singletons.json` has both `beetleContextChain` and `beetleGimmickChain`.
+**Verified in-game (2026-07-18):** marker vanishes the moment you gather (live gimmick), and
+is still gone after a save+reload (ContextDB) — the single-read versions each failed one of
+those halves.
 
 **Why the ContextDB is unavoidable (not just the gimmick).** A **collected beetle does not
 respawn a gimmick at all** — reload a save and a gathered beetle simply isn't created in the
