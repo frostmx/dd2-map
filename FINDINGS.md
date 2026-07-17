@@ -1322,6 +1322,16 @@ flicks) but is judder-free regardless of feed rate, monitor refresh, or phase �
 right fix for "camera feed vs vsync" mismatches generally, worth remembering for any
 future 60Hz+ overlay work.
 
+**Known residual jerkiness — not yet fully smoothed (see `prompts/ar-smoothness.md`).**
+Only the CAMERA is interpolated. `arPlayer` (the player position) is applied straight from
+the 30Hz `game-position` feed with no interpolation, so everything derived from it — the
+distance-faded float, distance culling, marker size/alpha — steps at 30Hz. Frames are also
+timestamped on IPC *arrival*, which adds delivery-latency noise to the spacing the
+interpolation assumes is clean; and if the on-disk `ar.interpMs` is set too low (it has
+been 8ms), the interpolation factor pins to 1 and freezes-then-jumps. The dedicated prompt
+lays out the investigate-then-fix plan (interpolate the player like the camera, capture-time
+timestamps, verify the overlay rAF isn't Chromium-throttled) — measure before changing.
+
 ### Off-screen handling and mode coverage
 
 Markers whose `|ndcX|` or `|ndcY|` exceeds 1 clamp to the border (`edge = 0.94` of
