@@ -1511,6 +1511,23 @@ you're **near** it. Your ~450 already-opened chests scattered across the map hav
 gimmick, so only the global ContextDB can hide them from launch. The gimmick read just adds
 the "vanish the instant you open it, before you save" immediacy.
 
+### AR collectibles — session complete (2026-07-18)
+
+All three mapgenie collectible types now draw as AR markers and hide once collected, verified
+in-game (immediate on collect + persistent across reload):
+
+- **Seeker's Tokens** — green circles, via `app.GenerateManager._NeverGenetateID`.
+- **Golden Trove Beetles** — yellow diamonds, via ContextDB (`GatherContext`) + live gimmick.
+- **Chests** — blue squares with size labels, via ContextDB (`GmItemContext`) + live gimmick.
+
+The reusable machinery this session built — managed-singleton resolution over pure RPM
+(`singletonHunt.js`, `--fields`/`--deref`), the `ContextDBMS → UniqueID2Keys → Records →
+Contexts` walk (`contextDbReader`), and the position-matched live-gimmick read
+(`gimmickReader`) — is now spec-driven, so a **fourth collectible would be mostly data**, not
+new traversal code. Nothing here is left half-done; the only deferred *nicety* is splitting
+chests out of the single `arCollectibles` toggle if a treasure-dense area ever feels cluttered
+(today it relies on the 200u radius cull + `edgeMax`).
+
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +
    jump (height up/down) + movement (changed) filters. Tools: `tools/scanner.js`
