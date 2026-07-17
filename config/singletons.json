@@ -50,5 +50,18 @@
       "lookAt": "0x3c",
       "aspect": "0x44"
     }
+  },
+  "neverGenerateChain": {
+    "note": "app.GenerateManager._NeverGenetateID: every collectible GUID (tokens AND beetles/chests/etc — not tokens-only) the game will never spawn again. GenerateManager instance +0x10+0x1f0 = the field's live pointer, a HashSet`1<System.Guid> whose own field layout is a verbatim match for real .NET's HashSet<T> (found live via tools/singletonHunt.js --deref). HashSet +0x10+0x08 = _slots array ptr, +0x10+0x20 = _count (i32). _slots array object +0x20 = Slot[0]; each Slot is 16 bytes {hashCode:i32 @0, next:i32 @4, valuePtr:i64 @8} — valuePtr is a BOXED Guid (the VM boxes generic value-type args), so valuePtr+0x10 is the 16 raw Guid bytes, decoded with .NET's own byte order (Data1/2/3 little-endian, Data4 raw). See src/main/generateManagerReader.js.",
+    "managerType": "app.GenerateManager",
+    "neverGenerateFieldOffset": "0x1f0",
+    "hashSetFields": {
+      "slots": "0x08",
+      "count": "0x20"
+    },
+    "slotsArrayDataOffset": "0x20",
+    "slotSize": 16,
+    "slotLayout": { "hashCode": "0x00", "next": "0x04", "valuePtr": "0x08" },
+    "boxedValueOffset": "0x10"
   }
 }

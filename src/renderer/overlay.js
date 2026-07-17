@@ -790,6 +790,10 @@ const arCtx = arCanvas.getContext('2d');
 let arPois = [];              // { guid, x, h, y }
 let arPlayer = null;          // latest [x, h, y] of the player
 let arDrawn = false;          // whether the canvas currently has content (cheap clear)
+// GUIDs app.GenerateManager._NeverGenetateID already has (see generateManagerReader.js).
+// Pushed on its own slow cadence (config/overlay.json ar.collectedPollMs) — not tied to
+// arPois's one-time load, so a token picked up mid-session drops out without a reload.
+let collectedGuids = new Set();
 
 // The camera feed arrives at ~60Hz but on a clock that drifts against the display's
 // vsync, and on a >60Hz monitor the rAF render outruns it — either way the render
@@ -806,6 +810,9 @@ window.dd2overlay.onCommand('camera-frame', (f) => {
   arCamCurr = { f, t: performance.now() };
 });
 window.dd2overlay.loadArPois().then((pois) => { arPois = pois || []; });
+window.dd2overlay.onCommand('collected-tokens', (data) => {
+  collectedGuids = new Set((data && data.guids) || []);
+});
 
 const arLerp = (a, b, t) => a + (b - a) * t;
 const arLerp3 = (A, B, t) => [arLerp(A[0], B[0], t), arLerp(A[1], B[1], t), arLerp(A[2], B[2], t)];
@@ -877,6 +884,7 @@ function arLoop() {
   const edgeMax = typeof cfgAr.edgeMax === 'number' ? cfgAr.edgeMax : 12;
   const items = [];
   for (const p of arPois) {
+    if (collectedGuids.has(p.guid)) continue;   // already picked up — don't draw it
     const truePh = p.h + hOff;   // POI's true height in the runtime frame
     // Distance is measured to the TRUE position (not the floated marker), so the fade
     // and radius don't feed back on themselves.

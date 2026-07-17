@@ -11,6 +11,7 @@ const { createTracker, floorOf } = require('./areaTracker');
 const { createLocalAreaReader } = require('./localAreaReader');
 const timeReader = require('./timeReader');
 const cameraFrameReader = require('./cameraFrameReader');
+const generateManagerReader = require('./generateManagerReader');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -149,7 +150,9 @@ let readerHandle = null;
 let moduleBase = null;
 let pollTimer = null;
 let camTimer = null;       // the fast camera-frame loop (see startMemoryPolling)
+let collectedTimer = null; // the slow "which tokens are already picked up" loop
 let frameOffsets = null;   // latest local->global offsets, written by the position poll
+let lastCollectedGuids = null; // last broadcast Set, so we only send on real change
 
 let cfg = null;              // config/overlay.json, with defaults filled in
 let gamePid = null;          // DD2.exe's pid, for the overlay's focus-follow
@@ -264,6 +267,7 @@ function rememberPlace() {
 let lastHintId = null;
 let timeLogged = false;   // one boot-time "[time] resolved" line, not one per tick
 let camLogged = false;    // same, for the camera-frame feed
+let genLogged = false;    // same, for the first successful collected-token read
 function describeHint(h) {
   if (!h) return null;
   const keys = cfg.hotkeys;
@@ -529,6 +533,24 @@ function startMemoryPolling() {
       console.log(`[camera] frame feed resolved: fov ${camFrame.fovDeg.toFixed(1)}°, aspect ${camFrame.aspect.toFixed(3)}`);
     }
   }, 16);   // ~60Hz, matched to the overlay's rAF render (see note above)
+
+  // Which AR tokens are already picked up: its own slow loop, decoupled from both
+  // feeds above. Collected-state changes at most a few times a session (see
+  // generateManagerReader.js), so this only reads and only sends when the set of
+  // GUIDs actually changed — same broadcast/onCommand channel as camera-frame.
+  collectedTimer = setInterval(() => {
+    if (!readerHandle) return;
+    const guids = generateManagerReader.read(readerHandle, moduleBase);
+    if (!guids) return;
+    if (lastCollectedGuids && guids.size === lastCollectedGuids.size
+      && [...guids].every((g) => lastCollectedGuids.has(g))) return; // unchanged
+    lastCollectedGuids = guids;
+    broadcast('collected-tokens', { guids: [...guids] });
+    if (!genLogged) {
+      genLogged = true;
+      console.log(`[collect] never-generate set resolved: ${guids.size} GUID(s) tracked`);
+    }
+  }, cfg.ar.collectedPollMs);
 
   pollTimer = setInterval(() => {
     try {
@@ -1291,6 +1313,7 @@ app.whenReady().then(() => {
 app.on('before-quit', () => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   if (camTimer) { clearInterval(camTimer); camTimer = null; }
+  if (collectedTimer) { clearInterval(collectedTimer); collectedTimer = null; }
   if (inputTimer) { clearInterval(inputTimer); inputTimer = null; }
 });
 
@@ -1303,6 +1326,7 @@ app.on('will-quit', () => {
 app.on('window-all-closed', () => {
   if (pollTimer) clearInterval(pollTimer);
   if (camTimer) clearInterval(camTimer);
+  if (collectedTimer) clearInterval(collectedTimer);
   if (inputTimer) clearInterval(inputTimer);
   if (readerHandle) closeHandle(readerHandle);
   if (process.platform !== 'darwin') app.quit();

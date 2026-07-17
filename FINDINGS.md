@@ -1089,8 +1089,10 @@ mapgenie doesn't have, plus S/M/L/XL size classes mapgenie doesn't distinguish.
 **Collected-state mechanics** (from `gibbed_Almanac.lua`, per type):
 
 - Tokens — global: collected GUID goes on `app.GenerateManager._NeverGenetateID`
-  (Capcom's typo). One set = all 240 states. Offline fallback:
-  `GimmickContext:isOnFreeBit(16)` via the ContextDB.
+  (Capcom's typo). Offline fallback: `GimmickContext:isOnFreeBit(16)` via the
+  ContextDB. **Read live and shipped** — see "Collected-token filtering" below; the
+  set turned out to hold every collectible type that uses this mechanism (394 GUIDs
+  live on one save vs. 240 known tokens), not tokens only.
 - Beetles — live gimmick `get_IsBroken()`; persistent via ContextDB
   `GatherContext:get_Num() <= 0`.
 - Chests — live gimmick `get_IsOpenedFreeBit()`; persistent via ContextDB
@@ -1132,9 +1134,14 @@ per-session instance pointers). Resolved and vt-verified: `app.GenerateManager`,
 
 **First live read:** `app.TimeManager` instance +0x10 is a double that advanced 3.0167
 in 3.0 real seconds — the elapsed-seconds accumulator (~370,165 at time of reading;
-semantics — day-relative vs total, timeScale interaction — still to pin down). Field
-offsets for the rest (`_NeverGenetateID`, hour/day fields) come next, either from an
-il2cpp dump or by parsing TDB fields the same way.
+semantics — day-relative vs total, timeScale interaction — still to pin down). This was
+superseded by the real clock fields once found — see "In-game clock" below.
+
+**`--deref <TypeName> <fieldName>` (2026-07-17):** resolves a field's offset the same
+way `--fields` does, dereferences its live pointer, and dumps THAT object's own field
+table — for reaching into a non-singleton nested object (a collection, a component) one
+named hop at a time instead of hand-computing offsets. First use:
+`--deref app.GenerateManager _NeverGenetateID` (see "Collected-token filtering" below).
 
 Per-session instance pointers move between launches; the durable recipe is
 RVA → VM → staticTbl → `elements[holderTypeIndex]` → slot +0x8, re-resolved at attach,
@@ -1343,17 +1350,63 @@ tuning-by-code (or manual JSON edit), never tuning-by-UI-drift.
 
 Knobs: `radiusU` (200), `markerPx` (14), `labels` (true), `heightOffsetU` (100, physics —
 don't retune by feel), `floatU`/`floatFadeU` (1.6/8, cosmetic), `interpMs` (24, smooth↔snappy),
-`edgeMax` (12).
+`edgeMax` (12), `collectedPollMs` (3000, see below).
 
 ### Data source
 
 `data/almanac/167.json` (Seeker's Tokens, vendored — see the ground-truth section above)
 loaded once via `ar:pois:load` IPC into `{guid, x, h, y}` triples (engine axes, no
-conversion needed — matches the position feed's convention directly). Not filtered by
-collected-state yet: every token draws regardless of whether it's been picked up
-(tracking that is the natural next step — `app.GenerateManager._NeverGenetateID`, per
-the earlier "can the mod tell which token I've used" research — now unblocked by the
-same singleton-RPM machinery this feature proved out).
+conversion needed — matches the position feed's convention directly). This list is
+static for the session; collected-state filtering (below) happens at render time
+against a separately-pushed live set, not by re-fetching this list.
+
+### Collected-token filtering — SHIPPED (`src/main/generateManagerReader.js`, 2026-07-17)
+
+Tokens you've already picked up no longer draw. The mechanism is
+`app.GenerateManager._NeverGenetateID`, already flagged above as the pending unblock —
+this closes it. What we didn't know going in was the field's *internal* layout: gibbed's
+Lua only calls `:GetEnumerator()/:MoveNext()/:get_Current()` on it (confirmed by fetching
+`gibbed_NeverGenerateDumper.lua`), which goes through REFramework's CLR reflection and
+never needed to know raw memory layout the way pure RPM does. RE Engine's `via.clr` VM
+is Capcom's own reimplementation, not real CoreCLR, so a textbook layout couldn't be
+assumed — it had to be read out of the live TDB and probed.
+
+**Tooling first:** `tools/singletonHunt.js` got a `--deref <TypeName> <fieldName>` mode
+(a generalization of `--fields`) that resolves a named field's offset, dereferences its
+live pointer, and dumps *that* object's own field table with live values — turning
+"reverse-engineer a nested field's layout" into one command instead of hand-computing
+offsets. `node tools/singletonHunt.js --deref app.GenerateManager _NeverGenetateID`
+revealed the field is a `HashSet`1<System.Guid>` whose own fields (`_buckets`, `_slots`,
+`_count`, `_lastIndex`, `_freeList`, `_comparer`, `_version`, plus static
+`Lower31BitMask`/`StackAllocThreshold`/`ShrinkThreshold`) are a **verbatim match for
+real .NET's `System.Collections.Generic.HashSet<T>`** — the VM mirrors the BCL's own
+layout here rather than a custom one, which is not something to assume elsewhere without
+re-checking.
+
+**The rest was manual probing** (not automatable yet — a boxed-value hop the tool
+doesn't follow): `_slots` array data starts at `array_object + 0x20`; each `Slot` packs
+into **16** bytes, not the BCL's nominal 24+ (`{hashCode: i32 @0, next: i32 @4,
+valuePtr: i64 @8}`) — the VM **boxes** the `Guid` generic argument rather than storing it
+inline, so `value` is a pointer, not embedded bytes. `valuePtr + 0x10` (the same
+"+0x10 past the header" convention every managed object in this codebase uses) is the
+raw 16-byte `Guid`, decoded with .NET's real byte order (Data1/Data2/Data3
+little-endian, Data4 raw) to match `data/almanac/*.json`'s string keys. Full chain
+recorded in `config/singletons.json`'s `neverGenerateChain` block.
+
+**It is not tokens-only.** On the save it was read from, the set held 394 GUIDs; only
+71 matched known token IDs. `GenerateManager` apparently uses this one set for every
+"never regenerate" collectible (beetles, chests, ...), not tokens exclusively — a caller
+must intersect against its own known-GUID list, which `generateManagerReader.js` and the
+AR filter both do implicitly (the almanac token list only ever supplies token GUIDs).
+
+**Wiring:** `src/main/index.js` polls this on its own timer (`ar.collectedPollMs`,
+default 3s) — deliberately decoupled from the 30Hz position poll and the 60Hz camera
+feed, since collected-state changes at most a few times per session. It diffs against
+the last-broadcast set and only sends `collected-tokens` (same generic
+`broadcast`/`onCommand` channel as `camera-frame`) when it actually changed. The overlay
+(`overlay.js`) keeps a `collectedGuids` `Set` and skips matching POIs in the AR render
+loop — `arPois` itself is never re-fetched, so a token collected mid-session drops out
+without needing a reload.
 
 ## Reusable RE workflow (for finding cell index or any future value)
 1. Value-scan for candidates; discriminate with camera-rotation (unchanged) +

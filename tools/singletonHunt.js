@@ -22,6 +22,12 @@
 //   --fields   also dump each type's TDB field table (name, type, static, offset)
 //              with live values read from the resolved instance — identifying a
 //              field is usually just reading its current value
+//   --deref <TypeName> <fieldName>
+//              resolve TypeName's instance, find fieldName's offset, dereference the
+//              live pointer there, and dump THAT object's own field table (with live
+//              values) the same way --fields does for a singleton. For reaching into
+//              a non-singleton nested object (a collection field, a component, ...)
+//              one hop at a time, without hand-computing offsets first.
 
 const fs = require('fs');
 const path = require('path');
@@ -204,9 +210,12 @@ function findTypes(handle, tdb, wanted) {
 // Fields of a type: REField[member_field .. +num_member_fields) — typedef v71 keeps
 // member_field in qword@0x20 bits 44..62, RETypeImpl keeps the count in qword@0x10
 // bits 33..56. FieldFlag.Static = 0x10.
-function dumpFields(handle, tdb, t, typesBuf, implsBuf, cstr, typeAt, instance) {
+// Decode a type's REField[] into plain JS objects — no printing, no live reads.
+// Kept separate from dumpFields (which prints) so --deref can look up one field by
+// name and get its raw fieldTypeId (needed to resolve the field's OWN type via
+// typeAt for the next hop) without dumpFields having thrown that id away.
+function readFields(handle, tdb, t, typesBuf, implsBuf, cstr) {
   const hdr = readMemory(handle, tdb, 0xE8);
-  const numFields = hdr.readUInt32LE(0x14);
   const numFieldImpl = hdr.readUInt32LE(0x1C);
   const fieldsPtr = hdr.readBigUInt64LE(0x80);
   const fieldImplPtr = hdr.readBigUInt64LE(0x88);
@@ -218,11 +227,10 @@ function dumpFields(handle, tdb, t, typesBuf, implsBuf, cstr, typeAt, instance) 
     Number((typesBuf.readBigUInt64LE(to + 8) >> 38n) & 0x3FFFFn) * IMPL_ENTRY_SIZE;
   const q10 = implsBuf.readBigUInt64LE(io + 0x10);
   const numMember = Number((q10 >> 33n) & 0xFFFFFFn);
-  console.log(`  fields: ${numMember} starting at REField[${memberField}]`);
-  if (!numMember) return [];
+  if (!numMember) return { numMember, memberField, out: [] };
 
   const fbuf = tryRead(handle, fieldsPtr + BigInt(memberField * 8), numMember * 8);
-  if (!fbuf) { console.log('  cannot read field table'); return []; }
+  if (!fbuf) return { numMember, memberField, out: null };
   const out = [];
   for (let i = 0; i < numMember; i++) {
     const q = fbuf.readBigUInt64LE(i * 8);
@@ -236,6 +244,18 @@ function dumpFields(handle, tdb, t, typesBuf, implsBuf, cstr, typeAt, instance) 
     const nameOff = impl.readUInt32LE(8) & 0xFFFFFFF;
     const name = cstr(nameOff);
     const isStatic = (flags & 0x10) !== 0;
+    out.push({ name, offset, isStatic, fieldTypeId });
+  }
+  return { numMember, memberField, out };
+}
+
+function dumpFields(handle, tdb, t, typesBuf, implsBuf, cstr, typeAt, instance) {
+  const { numMember, memberField, out: fields } = readFields(handle, tdb, t, typesBuf, implsBuf, cstr);
+  console.log(`  fields: ${numMember} starting at REField[${memberField}]`);
+  if (!numMember) return [];
+  if (fields === null) { console.log('  cannot read field table'); return []; }
+  const out = [];
+  for (const { name, offset, isStatic, fieldTypeId } of fields) {
     const ftype = typeAt(fieldTypeId);
     let live = '';
     if (!isStatic && instance) {
@@ -246,7 +266,7 @@ function dumpFields(handle, tdb, t, typesBuf, implsBuf, cstr, typeAt, instance) 
       }
     }
     console.log(`    +0x${offset.toString(16).padStart(3, '0')}${isStatic ? ' [static]' : '         '} ${name}: ${ftype ? ftype.name : fieldTypeId}${live}`);
-    out.push({ name, offset, isStatic, type: ftype ? ftype.name : String(fieldTypeId) });
+    out.push({ name, offset, isStatic, fieldTypeId, type: ftype ? ftype.name : String(fieldTypeId) });
   }
   return out;
 }
@@ -276,10 +296,21 @@ function findInstance(handle, staticTbl, t) {
 }
 
 function main() {
-  const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-  const save = process.argv.includes('--save');
-  const fields = process.argv.includes('--fields');
-  const wanted = args.length ? args : DEFAULT_TYPES;
+  const argv = process.argv.slice(2);
+  const save = argv.includes('--save');
+  const fields = argv.includes('--fields');
+  const derefIdx = argv.indexOf('--deref');
+  const deref = derefIdx !== -1 ? { typeName: argv[derefIdx + 1], fieldName: argv[derefIdx + 2] } : null;
+  if (deref && (!deref.typeName || !deref.fieldName)) {
+    console.error('--deref needs a TypeName and a fieldName: --deref app.GenerateManager _NeverGenetateID');
+    process.exit(1);
+  }
+  const args = argv.filter((a, i) => {
+    if (a.startsWith('--')) return false;
+    if (deref && (i === derefIdx + 1 || i === derefIdx + 2)) return false; // consumed by --deref
+    return true;
+  });
+  const wanted = deref ? [deref.typeName] : (args.length ? args : DEFAULT_TYPES);
 
   const pid = findProcessIdByName('DD2.exe');
   if (!pid) { console.error('DD2.exe is not running'); process.exit(1); }
@@ -356,6 +387,37 @@ function main() {
             out.types[name].fields = dumpFields(
               handle, tdbHit.tdb, t, typesBuf, implsBuf, cstr, typeAt,
               r?.instance ? r.instance.ptr : null);
+          }
+          if (deref && name === deref.typeName) {
+            if (!r?.instance) {
+              console.log(`  cannot --deref: no live instance resolved for ${name}`);
+            } else {
+              const { out: flds } = readFields(handle, tdbHit.tdb, t, typesBuf, implsBuf, cstr);
+              const f = (flds || []).find((x) => x.name === deref.fieldName);
+              if (!f) {
+                console.log(`  --deref: field '${deref.fieldName}' not found on ${name}`);
+              } else if (f.isStatic) {
+                console.log(`\n--deref ${name}.${f.name}: +0x${f.offset.toString(16)} [static] — read from the type's own static slot table, not the instance (not implemented; rerun with --fields to see static slots)`);
+              } else {
+                console.log(`\n--deref ${name}.${f.name}: +0x${f.offset.toString(16)}`);
+                const childPtr = readPointer(handle, r.instance.ptr + 0x10n + BigInt(f.offset));
+                console.log(`  live pointer: 0x${childPtr.toString(16)}`);
+                if (childPtr === 0n) {
+                  console.log('  null — field not yet initialized (no save loaded? wrong offset?)');
+                } else {
+                  const childType = typeAt(f.fieldTypeId);
+                  if (!childType) {
+                    console.log(`  field's declared type (id ${f.fieldTypeId}) did not resolve`);
+                  } else {
+                    console.log(`  target type: ${childType.name} (type_index ${childType.typeIndex})`);
+                    const peek = tryRead(handle, childPtr, 0x60);
+                    if (peek) console.log(`  first 0x60 bytes:\n    ${peek.toString('hex').replace(/(.{32})/g, '$1\n    ')}`);
+                    dumpFields(handle, tdbHit.tdb, { ...childType, arrayPos: f.fieldTypeId },
+                      typesBuf, implsBuf, cstr, typeAt, childPtr);
+                  }
+                }
+              }
+            }
           }
         }
         if (save) {

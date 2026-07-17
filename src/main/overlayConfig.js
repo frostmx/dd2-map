@@ -57,6 +57,11 @@ const DEFAULTS = {
     // Off-screen tokens clamp to the screen border as arrows rather than vanishing.
     // Cap how many, so a dense area doesn't wall the edges — nearest ones win.
     edgeMax: 12,
+    // How often (ms) to re-read app.GenerateManager._NeverGenetateID and hide tokens
+    // the player has already collected. Collected-state changes at most a few times
+    // per session, nowhere near every frame, so this is its own slow timer separate
+    // from the 30Hz position poll and 16ms camera timer — see generateManagerReader.js.
+    collectedPollMs: 3000,
   },
 
   // The windowed F9 mode's box, as fractions of the screen (resolution-independent). The
