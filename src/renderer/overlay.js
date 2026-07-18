@@ -679,7 +679,9 @@ window.dd2overlay.onGamePosition((data) => {
   if (!cfg) return;
   // Engine [x, h, y] for the AR layer — GLOBAL height, matching x/y and the POI table
   // (the plain `height` is local-frame and can be hundreds of units off — see index.js).
-  arPlayer = [data.x, data.heightGlobal != null ? data.heightGlobal : data.height, data.y];
+  // Keep the last two, timestamped, so arSamplePlayer can interpolate (see decl above).
+  arPlayerPrev = arPlayerCurr;
+  arPlayerCurr = { p: [data.x, data.heightGlobal != null ? data.heightGlobal : data.height, data.y], t: performance.now() };
   updateHud(data);
   if (!calibration) return;
 
@@ -788,7 +790,15 @@ window.dd2overlay.onGamePosition((data) => {
 const arCanvas = document.getElementById('arCanvas');
 const arCtx = arCanvas.getContext('2d');
 let arPois = [];              // { guid, x, h, y }
-let arPlayer = null;          // latest [x, h, y] of the player
+// The player position, kept as the last two timestamped samples and interpolated
+// (arSamplePlayer). The 30Hz feed is slower and jerkier than the camera, so applying it
+// straight made everything derived from player distance — the float, distance culling,
+// marker size/alpha — step at the feed rate (the markers "blink/redraw" while moving).
+// Interpolating fixes that. It is drawn at its OWN render delay (interpMs), larger than the
+// camera's (camInterpMs), because it only gates styling/visibility — not marker screen
+// position — so its latency is invisible while a smaller camera delay cuts rotation lag.
+let arPlayerPrev = null;      // { p:[x,h,y], t }
+let arPlayerCurr = null;      // latest player sample
 let arDrawn = false;          // whether the canvas currently has content (cheap clear)
 // GUIDs app.GenerateManager._NeverGenetateID already has (see generateManagerReader.js).
 // Pushed on its own slow cadence (config/overlay.json ar.collectedPollMs) — not tied to
@@ -836,10 +846,21 @@ function arSampleCamera(renderTime) {
   };
 }
 
+// Player [x, h, y] at renderTime, same two-sample interpolation as the camera (but at its
+// own, larger delay — see decl). Makes the distance-derived float/cull/size/alpha update at
+// the render rate instead of stepping at the 30Hz feed.
+function arSamplePlayer(renderTime) {
+  if (!arPlayerCurr) return null;
+  if (!arPlayerPrev || arPlayerCurr.t <= arPlayerPrev.t) return arPlayerCurr.p;
+  let a = (renderTime - arPlayerPrev.t) / (arPlayerCurr.t - arPlayerPrev.t);
+  a = Math.max(0, Math.min(1, a));
+  return arLerp3(arPlayerPrev.p, arPlayerCurr.p, a);
+}
+
 function arActive() {
   // Every F9 mode: the AR canvas sits above the map webview (z-index), so tokens show
   // over the game in icons mode and over the map in the full-map/windowed modes too.
-  return cfg && cfg.arCollectibles !== false && arCamCurr && arPlayer && arPois.length;
+  return cfg && cfg.arCollectibles !== false && arCamCurr && arPlayerCurr && arPois.length;
 }
 
 function arLoop() {
@@ -861,8 +882,16 @@ function arLoop() {
 
   const cfgAr = cfg.ar || {};
   const interpMs = typeof cfgAr.interpMs === 'number' ? cfgAr.interpMs : 24;
-  const cam = arSampleCamera(performance.now() - interpMs);
-  if (!cam) { if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; } return; }
+  // Camera and player are interpolated to DIFFERENT render delays on purpose. A marker's
+  // on-screen position depends only on the camera (POI vs camera basis) — the player only
+  // gates culling, size/alpha and the float, all slow — so the camera can run a much
+  // smaller delay (less rotation lag) than the player needs to cover its slower/jerkier
+  // 30Hz feed without freezing-on-latest (the blink). camInterpMs falls back to interpMs.
+  const camInterpMs = typeof cfgAr.camInterpMs === 'number' ? cfgAr.camInterpMs : interpMs;
+  const now = performance.now();
+  const cam = arSampleCamera(now - camInterpMs);
+  const player = arSamplePlayer(now - interpMs);
+  if (!cam || !player) { if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; } return; }
   const radius = cfgAr.radiusU || 200;
   const markerPx = cfgAr.markerPx || 14;
   // POI height frame correction (Almanac -> runtime, physics). The cosmetic float is
@@ -876,7 +905,7 @@ function arLoop() {
   // Which way is "in front"? The player is always in front of a chase camera, so the
   // sign of fwd·(player - cam) IS the view direction — self-calibrating, no convention
   // to get wrong, and it keeps working if the engine's handedness surprises us.
-  const pd = dot(cam.fwd, arPlayer[0] - cx, arPlayer[1] - ch, arPlayer[2] - cy);
+  const pd = dot(cam.fwd, player[0] - cx, player[1] - ch, player[2] - cy);
   const viewSign = pd >= 0 ? 1 : -1;
 
   const tanV = Math.tan((cam.fovDeg * Math.PI / 180) / 2);
@@ -888,7 +917,7 @@ function arLoop() {
     const truePh = p.h + hOff;   // POI's true height in the runtime frame
     // Distance is measured to the TRUE position (not the floated marker), so the fade
     // and radius don't feed back on themselves.
-    const distPlayer = Math.hypot(p.x - arPlayer[0], truePh - arPlayer[1], p.y - arPlayer[2]);
+    const distPlayer = Math.hypot(p.x - player[0], truePh - player[1], p.y - player[2]);
     if (distPlayer > radius) continue;
     // Float fades in with distance: 0 on top of the token, full past floatFade.
     const ph = truePh + floatU * Math.min(1, distPlayer / floatFade);

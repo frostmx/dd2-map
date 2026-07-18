@@ -50,11 +50,25 @@ const DEFAULTS = {
     // at range. Tune to taste.
     floatU: 1.6,
     floatFadeU: 8,
-    // Render-interpolation delay (ms). Markers are drawn from a camera interpolated to
-    // (now - interpMs), between the two latest frames, so feed/vsync phase can't judder
-    // the motion. ~1.5 feed intervals guarantees two frames straddle the render time.
-    // Higher = smoother but more latent on fast flicks; lower = snappier but can judder.
-    interpMs: 8,
+    // Render-interpolation delay (ms) for the PLAYER position. The player is drawn
+    // interpolated to (now - interpMs) between its two latest 30Hz samples, so its
+    // slow/jerky feed can't step the distance-derived float/cull/size/alpha (the "blink").
+    // Must stay >= ~half the position feed interval (~46ms measured) or the player freezes-
+    // on-latest and the blink returns. It only gates styling/visibility, NOT marker screen
+    // position, so this delay's latency is invisible — keep it comfortably above the floor.
+    interpMs: 30,
+    // Render-interpolation delay (ms) for the CAMERA basis — the one that governs how much
+    // the markers LAG when you swing the camera. A marker's screen position is camera-only,
+    // so this can differ from the player's without any blink. Must stay >= the real camera
+    // feed interval or it clamps HIGH (freeze-on-latest = judder). History (2026-07-19): with
+    // the default Windows timer the feed floored at ~26ms and 16ms here clamped 41% HIGH
+    // (juddery), so 28ms was the floor. timerResolution.begin() (1ms quantum) then sped the
+    // feed to ~16ms (frame-quantized), at which 28ms was over-delayed (68% LOW = extra lag).
+    // With the ~16ms feed, 20ms measured 0% HIGH clamp (22% LOW = slight over-delay), so
+    // there was headroom to go lower: 18ms trims more lag while HIGH clamp stays near zero
+    // (only the occasional >18ms feed gap clamps). Below ~16ms it would clamp HIGH (judder)
+    // on ordinary frames. Falls back to interpMs if unset.
+    camInterpMs: 18,
     // Off-screen tokens clamp to the screen border as arrows rather than vanishing.
     // Cap how many, so a dense area doesn't wall the edges — nearest ones win.
     edgeMax: 12,

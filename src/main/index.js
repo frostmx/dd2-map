@@ -14,6 +14,7 @@ const cameraFrameReader = require('./cameraFrameReader');
 const generateManagerReader = require('./generateManagerReader');
 const contextDbReader = require('./contextDbReader');
 const gimmickReader = require('./gimmickReader');
+const timerResolution = require('./timerResolution');
 
 // Must run before app.whenReady(): the overlay is never the focused window, and
 // without these Chromium throttles its timers/rAF to ~1fps and the marker
@@ -509,10 +510,14 @@ function startMemoryPolling() {
   // The camera feed runs on its own loop, separate from the 30Hz position poll: markers
   // are glued to the world only as long as the projection uses the rotation the game is
   // rendering with (at 30Hz a pan projects with a basis up to 33ms stale and every marker
-  // swims). Pinned to ~60Hz to MATCH the overlay's requestAnimationFrame render: a faster
-  // feed (120Hz) lands two samples per drawn frame at irregular phases, so the render
-  // keeps picking a different one each vsync — a beat frequency that reads as judder.
-  // One sample per frame is smooth. The reads are 6 small RPM calls — microseconds.
+  // swims). The overlay INTERPOLATES between the two latest frames at render time
+  // (arSampleCamera), so a denser feed no longer causes the old beat-frequency judder (that
+  // was when the render picked ONE sample per vsync) — a denser, steadier feed only helps.
+  // BUT the main-process libuv timer is floored by Windows' ~15.6ms quantum: measured
+  // 2026-07-19, setInterval(8) AND setInterval(16) both yield ~26ms real intervals (min
+  // ~15ms). So the AR latency floor is ~26ms until the OS timer resolution is raised (e.g.
+  // timeBeginPeriod via koffi) — the 8ms nominal just fires every quantum for the steadiest
+  // feed we can get. Reads are 6 small RPM calls — microseconds; the cost is the timer.
   camTimer = setInterval(() => {
     if (!readerHandle || !frameOffsets) return;
     const camFrame = cameraFrameReader.read(readerHandle, moduleBase);
@@ -1361,6 +1366,10 @@ app.whenReady().then(() => {
   createWindow();
   createOverlay();
   registerHotkeys();
+  // 1ms system timer quantum so the camera setInterval actually fires fast (Windows floors
+  // it at ~15.6ms otherwise — see timerResolution.js / camTimer). Released in will-quit.
+  const hiRes = timerResolution.begin();
+  console.log(`[timer] high-resolution timer ${hiRes ? 'enabled (1ms quantum)' : 'NOT available — feed stays ~26ms'}`);
   startMemoryPolling();
   startInputPolling();
 
@@ -1380,6 +1389,7 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
+  timerResolution.end();   // release the 1ms timer quantum (global setting — must be paired)
   if (readerHandle) { closeHandle(readerHandle); readerHandle = null; }
   if (localAreaReader) { localAreaReader.detach(); }
 });

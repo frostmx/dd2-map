@@ -1315,22 +1315,49 @@ monitor outruns a 60Hz feed entirely, so a residual beat-frequency judder remain
 **Real fix: interpolate in the renderer, decoupling feed rate from judder completely.**
 The overlay keeps the last two `camera-frame` messages with arrival timestamps
 (`performance.now()`) and draws from a camera sampled at `renderTime = now -
-interpMs` (default 24ms — roughly 1.5 feed intervals, enough to guarantee two real
-samples straddle it), lerping position/fov/aspect linearly and re-normalizing the basis
-vectors after lerping. The scene runs ~24ms latent (invisible except on very fast
-flicks) but is judder-free regardless of feed rate, monitor refresh, or phase — the
-right fix for "camera feed vs vsync" mismatches generally, worth remembering for any
-future 60Hz+ overlay work.
+camInterpMs` (must exceed the feed interval so two real samples straddle it), lerping
+position/fov/aspect linearly and re-normalizing the basis vectors after lerping. The scene
+runs slightly latent (invisible except on very fast flicks) but is judder-free regardless of
+feed rate, monitor refresh, or phase — the right fix for "camera feed vs vsync" mismatches
+generally, worth remembering for any future 60Hz+ overlay work. (The player position is
+interpolated the same way but at its own, larger delay — see "Smoothing the AR markers".)
 
-**Known residual jerkiness — not yet fully smoothed (see `prompts/ar-smoothness.md`).**
-Only the CAMERA is interpolated. `arPlayer` (the player position) is applied straight from
-the 30Hz `game-position` feed with no interpolation, so everything derived from it — the
-distance-faded float, distance culling, marker size/alpha — steps at 30Hz. Frames are also
-timestamped on IPC *arrival*, which adds delivery-latency noise to the spacing the
-interpolation assumes is clean; and if the on-disk `ar.interpMs` is set too low (it has
-been 8ms), the interpolation factor pins to 1 and freezes-then-jumps. The dedicated prompt
-lays out the investigate-then-fix plan (interpolate the player like the camera, capture-time
-timestamps, verify the overlay rAF isn't Chromium-throttled) — measure before changing.
+### Smoothing the AR markers — SHIPPED (2026-07-19, was `prompts/ar-smoothness.md`)
+
+The markers were juddery on movement and blinked on the camera swing. Instrumented first
+(temporary `[ar-metrics]` overlay logging: feed inter-arrival, real rAF rate, `a`-clamp
+rate, per-frame draw cost, blink diagnostics), which named the causes instead of guessing —
+and immediately **exonerated two red herrings**: draw cost was **0.2ms/frame** (Canvas2D is
+nowhere near a bottleneck; WebGL would change nothing — the judder is data, not draw) and
+the overlay rAF ran at **79–118fps** (not Chromium-throttled). Three real fixes:
+
+1. **`interpMs` default was 8ms, far below the feed** — the `a` factor pinned high **68%**
+   of frames (freeze-on-latest then jump = the judder). The on-disk `ar` block carried no
+   `interpMs`, so the too-small default applied. Raised it; the freeze-jump vanished.
+2. **The player wasn't interpolated** — only the camera was. `arPlayer` stepped straight off
+   the 30Hz feed, so everything derived from player *distance* (the float, culling, marker
+   size/alpha) stepped too = the **blink**. Gave the player the same two-sample timestamped
+   interpolation as the camera (`arSamplePlayer`). Blink gone.
+3. **Camera and player use DIFFERENT render delays, on purpose.** A marker's on-screen
+   *position* depends only on the camera (POI vs camera basis) — the player only gates
+   culling/size/alpha/float, all slow and latency-insensitive. So `camInterpMs` (camera) can
+   be small for low rotation lag while `interpMs` (player) stays larger to cover its slower,
+   jerkier feed without re-blinking. This broke the single-knob floor.
+
+**The latency floor was the Windows timer, not the code.** The camera feed is a main-process
+`setInterval`, which Windows floors at its ~15.6ms quantum: `setInterval(8)` and `(16)` BOTH
+measured ~26ms, pinning the smooth `camInterpMs` floor at ~28ms (below it the feed can't
+straddle a smaller delay → HIGH clamp → judder; 16ms was tried and clamped 41% high).
+`src/main/timerResolution.js` calls `timeBeginPeriod(1)` (winmm.dll, via koffi — already a
+dep; paired with `timeEndPeriod` on `will-quit`) to drop the quantum to 1ms. The feed then
+measured **~16ms** (camera, frame-quantized) and **~33ms** (position, its nominal), which let
+`camInterpMs` come down to **18ms** at ~1% high clamp — roughly **halving the rotation lag**
+while staying blink- and judder-free. Final: `camInterpMs 18`, `interpMs 30`, `camTimer 8ms`.
+
+nlerp (lerp + renormalize) on the basis was never the residual problem and slerp was not
+needed. Capture-time timestamps (frames are still stamped on IPC arrival) were left for
+later: after 1–3 above the arrival jitter was not the dominant term. Tuning is by measured
+number — re-add the `[ar-metrics]` block (git history) to re-measure before retuning.
 
 ### Off-screen handling and mode coverage
 
@@ -1361,8 +1388,10 @@ before writing unless the user hand-edited one into the file themselves — the 
 tuning-by-code (or manual JSON edit), never tuning-by-UI-drift.
 
 Knobs: `radiusU` (200), `markerPx` (14), `labels` (true), `heightOffsetU` (100, physics —
-don't retune by feel), `floatU`/`floatFadeU` (1.6/8, cosmetic), `interpMs` (24, smooth↔snappy),
-`edgeMax` (12), `collectedPollMs` (3000, see below).
+don't retune by feel), `floatU`/`floatFadeU` (1.6/8, cosmetic), `interpMs` (30, PLAYER render
+delay — blink↔lag), `camInterpMs` (18, CAMERA render delay — rotation lag↔judder, falls back
+to `interpMs`; see "Smoothing the AR markers"), `edgeMax` (12), `collectedPollMs` (3000, see
+below).
 
 ### Data source
 
