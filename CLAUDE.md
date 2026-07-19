@@ -78,24 +78,30 @@ Both windows share `renderer/calibration.js` (`window.DD2Calib`) and `mapAgent.j
 (`window.DD2MapAgent`) — loaded by `<script src>` in both HTML files so the two can't
 drift apart.
 
-### Coordinates: two transforms, two files, two writers
+### Coordinates: two transforms, two files, one writer each
 
 `game (x, y)` → `mapgenie (lng, lat)` is a **2D affine**. There are two of them:
 
 - **World affine** — `config/calibration.json`. Solved by clicking 3+ landmarks in
   the control window; Refine appends a point and re-solves. Written by the
   **renderer**.
-- **Dungeon insets** — `config/areas.json`. mapgenie draws each dungeon as an inset
-  panel off to the side of the world map, in the same lng/lat plane, while DD2 keeps
-  reporting ordinary world coords inside caves. **Almost** every inset shares **one**
-  linear part (`insetLinear`) and differs only by translation, so **one** correspondence
-  pins a dungeon — and walking through a doorway supplies that correspondence for
-  free. A few are drawn at their own scale (Ancestral Chamber's inset is ~0.68× the
-  shared scale); those carry an optional per-area `scale` that `forArea` multiplies into
-  the shared linear (absent → 1). Written by **main** (`areaStore.js`).
+- **Dungeon insets** — `config/dungeons.json`: `{ insetLinear, areas: { <key>: {c,f,scale?} } }`.
+  mapgenie draws each dungeon as an inset panel off to the side of the world map, in the same
+  lng/lat plane, while DD2 keeps reporting ordinary world coords inside caves. **Almost** every
+  inset shares **one** linear part (`insetLinear`) and differs only by translation; a few are
+  drawn at their own scale (Ancestral Chamber's inset is ~0.68× the shared scale) and carry an
+  optional per-area `scale` that `forArea` multiplies into the shared linear (absent → 1). This
+  file is **authored** — by the `.map` RE tooling and by hand — and the **app only ever reads
+  it**. Nothing in the app writes a dungeon transform. That is deliberate: the app *used* to
+  auto-calibrate dungeons from doorway crossings and re-merge a second table over this one on
+  every launch, and that silent write-back is exactly what let a rescale look applied and then
+  quietly revert (see FINDINGS "single-source dungeon transforms"). Dungeons come from the
+  LocalArea pointer + this authored table now — no runtime calibration.
 
-Two files with one writer each, deliberately: a single file with two writers would
-let a Refine clobber every dungeon you'd calibrated.
+`config/areas.json` still exists but holds **only `places`** (buildings you've named with
+`Home`) — the sole area data the app writes (`areaStore.save`), and it moves no marker.
+`config/localAreas.json` keeps the tooling **metadata** the pointer needs (box/score/title/
+uiArea) but its `c,f` are **no longer consulted** — the transform comes from `dungeons.json`.
 
 `DD2Calib.forArea(worldCal, areas, areaKey)` picks the right one. It returns `null`
 for an area that can't be placed — callers must **not** fall back to the world
@@ -108,8 +114,9 @@ is underground.
 windows must agree, so exactly one may decide) and stamps `areaKey` onto the position
 feed.
 
-Three questions, three different answers — all read from one 32-byte window of module-
-static memory (`DD2.exe+FA62C94`, no pointer chain):
+Three questions, three different answers (the inside-flag and the game's ids live in one
+32-byte window of module-static memory, `DD2.exe+FA62C94`, no pointer chain; the floor now
+comes from the LocalArea pointer):
 
 - **Whether you're inside** — the game's flag at `+FA62CAC`. 0 = overworld, 1 and 2 both
   = inside. Authoritative; never height (it's continuous through a cave mouth, and
@@ -123,14 +130,13 @@ static memory (`DD2.exe+FA62C94`, no pointer chain):
   skips the radius, because then the guess is yours. The game's own dungeon id sits right
   there at `+FA62CB0`, but it's the *game's* numbering, not mapgenie's, and the mapping
   doesn't exist yet. `tools/zoneLog.js` is collecting it.
-- **Which floor** — **height**, learned per dungeon into `areas.floorHeights`. This is the
-  only signal that can carry it: the game reports the *same (x, y)* on every floor, so
-  floors differ in z and nothing else. `PageUp`/`PageDown` names a floor, the app measures
-  how high it sits (once your height *settles* — you press the key on the stairs, which
-  belong to no floor), and from then on height picks the floor. Absolute height, never
-  height *change*: real floor gaps run 5.8u–16.6u while height wanders 4u within one floor,
-  so no fixed threshold works. **The room id at `+FA62C94` is NOT a floor** — same hash at
-  h=-13.7 and h=-5.2 — and a learned room→floor table was tried and failed; don't retry it.
+- **Which floor** — the **LocalArea pointer** (`localAreaReader.js`): its id is unique per
+  *(area, floor)* and immune to falls/lifts/teleports, so `index.js` takes the floor straight
+  from it. Height plays no part. The old height-learning path (`PageUp`/`PageDown`,
+  `areas.floorHeights`) was **removed** — it was fed *local* height, which rebases per
+  streaming-cell, so a floor could read "100u off itself" across a cell boundary. (The room
+  id at `+FA62C94` was never a floor either.) See FINDINGS, "Height-based floor mechanic
+  retired".
 
 **Most interiors are not dungeons at all** — they're houses, shops, inns, and mapgenie
 draws no inset for any of them. Nothing needs placing (indoors the game still reports true
@@ -142,9 +148,8 @@ is then recognised forever: the HUD names the building, and no dungeon is guesse
 again. It binds *your* position, not the POI's (mapgenie's icon can sit on a roof), and
 refuses past `placeRadius` (40u).
 
-`Insert` covers the two dungeons mapgenie has no entrance for. Floor labels sort by
-`floorRank()`, not alphabetically — B1F is *below* 1F — and an unlabelled `''` floor is
-dropped unless it's the only one (it would otherwise be a phantom floor with no panel).
+`Insert` covers the two dungeons mapgenie has no entrance for (both now also carry trusted
+LocalArea ids, so the pointer names them on entry — `Insert` is a legacy fallback).
 
 Where the tracker won't guess, it says so: `tracker.hint()` returns a structured
 "what I'm unsure about, and which keys settle it" (or null), main turns it into English
@@ -194,6 +199,7 @@ thresholds, dwell times, zoom steps, opacity/brightness per mode, hotkeys).
 boots. Prefer adding a knob there over hardcoding a constant — the numbers that
 matter can only be judged while actually playing.
 
-`config/mapgenie-areas.json` is a re-derived cache and is gitignored;
-`config/areas.json` is not — it holds solved transforms that cost playtime.
+`config/mapgenie-areas.json` is a re-derived cache and is gitignored. `config/dungeons.json`
+(authored dungeon transforms, **app read-only**) and `config/areas.json` (named buildings, the
+one area file the app writes) are both tracked — they hold work that cost playtime.
 

@@ -14,10 +14,9 @@ contextBridge.exposeInMainWorld('dd2', {
   setOverlaySetting: (key, value) => ipcRenderer.send('overlay:setting', { key, value }),
   edgeArtAvailable: () => ipcRenderer.invoke('overlay:edge-available'),
 
-  // Dungeon areas: mapgenie's portal graph, and the per-dungeon inset transforms.
+  // Dungeon areas: mapgenie's portal graph, and the (read-only) per-dungeon inset transforms.
+  // Dungeon transforms are authored in config/dungeons.json — there is no in-app calibration.
   saveAreaMetadata: (meta) => ipcRenderer.invoke('areas:metadata', meta),
   loadAreas: () => ipcRenderer.invoke('areas:load'),
-  calibrateArea: (payload) => ipcRenderer.invoke('areas:calibrate', payload),
-  shiftArea: (payload) => ipcRenderer.send('areas:shift', payload),
   onAreasState: (callback) => ipcRenderer.on('areas:state', (_event, data) => callback(data)),
 });

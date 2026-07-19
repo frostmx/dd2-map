@@ -410,6 +410,25 @@ layer. Two things that cost debugging:
   by a since-changed LocalArea→subregion mapping, reachable only via the deprecated tracker
   fallback. Placing them needs their LocalArea id first.
 
+  **Single-source dungeon transforms — the clobber bug, and the fix (2026-07-19).** The 2.0
+  rescale (above) *looked* applied, then silently reverted 95 `src:"game"` dungeons on the next
+  launch: `mergeLocalAreas()` (`index.js`) copied `localAreas.json`'s `c,f` over `areas` **every
+  startup, unconditionally** (`score ≥ 0.30`), and the rescale had only updated `areas.json`, not
+  `localAreas.json`. So each restart re-installed the un-rescaled (1.9225-era) `c,f` while
+  `insetLinear` stayed 2.0 — a constant translation of ~29% of a box's height (the "marker floats
+  above the tunnel" report). The 16 `src:"aligned"` dungeons survived only because they're
+  `score < 0.30` (gated out of the merge). Diagnosis: same-position reads across restarts, and
+  `areas.json` `c,f` byte-identical to `localAreas.json`'s (not the rescale commit's).
+  **Immediate fix:** rescale `localAreas.json` too (center-preserving 1.9225→2.0), format-
+  preserving (line-level c/f edit — a full JS re-stringify *reorders integer keys numerically* and
+  flips `e-08`→`e-8`, a 1356-line reformat; avoid it). **Structural fix:** dungeon transforms now
+  live in an authored, **app-read-only** `config/dungeons.json`; `mergeLocalAreas`/`absorbAnchor`
+  (doorway auto-calibration)/`ensureInsetLinear` and the in-app calibrate/Refine are deleted;
+  `areas.json` keeps only `places`. `localAreas.json` stays for the pointer's metadata but its
+  `c,f` are no longer read. The rule that killed the bug: **one writer per transform, and for
+  dungeons that writer is us, not the app.** insetLinear in `dungeons.json` is absolute, so it does
+  NOT track the world affine — re-calibrating the overworld no longer re-derives it.
+
 ### Found POIs are a paint expression, not a layer (and not filterable)
 mapgenie has no separate layer for locations you've marked found — it fades them
 in place, on the `locations` layer:
@@ -853,6 +872,22 @@ player's world position paired with the matched entrance's inset position.
 
 ### 3. Which floor? HEIGHT — and nothing else can do it
 
+> **RETIRED (2026-07-19). Floor now comes from the LocalArea pointer, not height.** The
+> premise below — "only height can separate floors" — held only until the LocalArea pointer
+> (`localAreaReader.js`) existed. That pointer returns an id **unique per (area, floor)** and
+> immune to falls/lifts/teleports; a walk through The Gracious Hand's Vaults confirmed it
+> (1F = `628`, B1F = `627`, distinct). So height is redundant — and it was also *wrong*: the
+> mechanic was fed **local** height, which rebases to 0 at every streaming-cell boundary, so
+> the same walk read 1F at local `-125.5` but B1F at local `-9.9` (inverted), while global
+> height read them correctly (102.5 vs 90.1). A floor thus reads "~100u off itself" whenever a
+> dungeon spans cells — the source of the false "floor may be wrong" nag. The whole height-floor
+> path (`floorByHeight`/`learnHeight`, `areas.floorHeights`, the `floor-off`/`floor-unknown`
+> hints, `PageUp`/`PageDown`) was deleted; the tracker now just holds the floor it entered on
+> as the pointer's null-tick fallback. Also tried and reverted the same day: forcing overworld
+> when `localArea === -1` — it regressed city detection, because `-1` also appears at unmapped
+> spots *inside* a city's footprint (under Vernworth) and during dungeon-entry transitions. The
+> section below is kept as the historical record of why height was used at all.
+
 **Only height can carry this, as a matter of fact rather than preference: the game reports
 the SAME (x, y) on every floor of a dungeon.** Two floors differ in z and in nothing else.
 So no x/y signal — not a room id, not the portal graph, not the panel geometry — can ever
@@ -1040,8 +1075,9 @@ Sketch of `tools/mergeAreas.js`, if we build it:
   is a better anchor than a 19u one).
 - `insetLinear` — keep ours; ignore theirs.
 
-Worth knowing before shipping the app around: `Home`, `Insert`, `PageUp`/`PageDown` are
-registered as **global** shortcuts, so they are swallowed system-wide while the app runs.
+Worth knowing before shipping the app around: `Insert` (and `Home`, if reassigned from its
+default-null) is registered as a **global** shortcut, so it is swallowed system-wide while
+the app runs. (`PageUp`/`PageDown` used to be too, for floor-learning — removed 2026-07-19.)
 
 ### Seeker's Token ground truth (2026-07-17): 240 exact correspondences, free
 
@@ -1608,6 +1644,22 @@ size in the label (`42u · L`). Structurally identical to beetles, so both reade
   makes it a chest). Beetles keep their exact vtable pre-filter. Both go through the one
   spec-driven `gimmickReader.read`.
 
+  **The match radius MUST be tight for chests (bug fixed 2026-07-19).** Because chests are
+  position-only, a loose radius mis-attributes an **unrelated** neighbour gimmick's `+0x374`
+  to the chest. Symptom: a chest's blue AR marker vanished **on approach, before opening** —
+  intermittently. Traced live (`scratchpad` probes over `gimmickReader`'s own walk): the
+  chest's OWN gimmick is correct — `+0x374 == 0` while closed, flips to `1` only on open (its
+  `+0x3d0` low byte goes `0→2→3` through the open animation). But two *different-vtable*
+  gimmicks (props/enemies, not chests) sat **1.95u and 2.40u** from the closed chest's almanac
+  point with `+0x374` already `1`, and the old **2.5u** radius swept them up → the closed chest
+  read "opened". The real chest gimmick sits at **~0.00u**. Fix: a per-spec `matchRadius`
+  (`gimmickReader` honours `spec.matchRadius`, default `MATCH_RADIUS` 2.5u); the chest spec in
+  `index.js` uses **1.0u**. Beetles are unaffected (their vtable pre-filter already excludes
+  neighbours, and they keep 2.5u). Erring tight is safe: a chest whose gimmick is missed by the
+  live read is still hidden by `contextDbReader` after the next save, so tightening only ever
+  *delays* a hide — it never *falsely* hides. (So `+0x374` itself was never wrong; the identity
+  was too loose.)
+
 The two ContextDB flags are opposite polarity and the two gimmick reads use different identity
 strategies — the `{flagOffset, collectedValue, vtableTypeIndex?}` spec captures both cleanly.
 Chest chains live in `config/singletons.json` (`chestContextChain`, `chestGimmickChain`).
@@ -1617,6 +1669,65 @@ respawn on reload (carrying a persistent `+0x3d0` free-bit) — but it still onl
 you're **near** it. Your ~450 already-opened chests scattered across the map have no loaded
 gimmick, so only the global ContextDB can hide them from launch. The gimmick read just adds
 the "vanish the instant you open it, before you save" immediacy.
+
+### Chest AR marker showing the WRONG state — the two failure modes (2026-07-19)
+
+A chest AR marker (blue square) draws for every almanac chest whose GUID is **not** in the
+collected set. That set is the **union of two reads**, with different coverage:
+
+| read | source | covers | blind to |
+|---|---|---|---|
+| `contextDbReader` | save-wide ContextDB (`GmItemContext +0x19==1`) | every opened chest **after a save**, near or far | chests opened but **not yet saved**; chests with **no** ContextDB record |
+| `gimmickReader` | the live gimmick byte, position-matched | a chest **while its gimmick is loaded near you** | anything out of streaming range |
+
+So the two known symptoms are opposite bugs — keep them straight when diagnosing:
+
+**1. Marker HIDDEN on a still-CLOSED chest (fixed 2026-07-19).** A false *positive* from the
+live read: chests are matched by position only (no vtable filter), so an **unrelated
+neighbour gimmick** (different vtable) carrying the generic `+0x374` within the match radius
+was blamed on the closed chest. Fixed by tightening the chest `matchRadius` to 1.0u (the chest
+gimmick sits ~0u from its almanac point; false neighbours were ~2u). See the live-gimmick
+subsection above.
+
+**2. Marker SHOWN on an already-OPENED chest.** A false *negative* — the opened chest's GUID
+is in neither read. **Which cause depends on WHEN it shows:**
+
+*Observed 2026-07-19: on a **fresh load** (not same-session), a marker led to an
+already-opened chest.* A fresh load makes the ContextDB authoritative from the start, so this
+**rules out save-lag** — it points at a **persistent** gap (record/GUID/duplicate below), not
+a timing one. Always ask first: did this show right after loading, or after opening it
+this session without saving? That single fact splits the causes.
+
+  - **Chest has no ContextDB record (persistent — fits the fresh-load sighting).** The DB
+    validation covered 725 chests; the almanac has 980 GUIDs. A chest the game never writes a
+    `GmItemContext` for (`GUID absent from UniqueID2Keys → "never approached"`) can only ever
+    be hidden by the live read — i.e. only while you're standing on it — so on a fresh load its
+    marker shows until you walk up to it.
+  - **GUID mismatch (persistent).** gibbed's almanac GUID ≠ the runtime `UniqueID` for that
+    chest → the intersection never matches, so it's never hidden. Presents identically to
+    "no record"; distinguish by checking whether the GUID exists in `UniqueID2Keys` at all.
+  - **Duplicate almanac entries (persistent).** 8 chest-entry pairs sit within 2u of each other
+    (likely one physical chest with two GUIDs); opening records only the real GUID, so the
+    phantom's marker never clears. Minor (16 of 980 GUIDs).
+  - **Save-lag gap (SAME-SESSION only — does NOT explain a fresh-load sighting).** The
+    ContextDB byte only flips **when the game writes a save**. Between opening a chest and the
+    next autosave, only the live read hides it, and that stops when the gimmick unloads — so
+    walking away before a save brings the marker back. Self-corrects at the next save or on
+    re-entering gimmick range. (Fix #1's tighter live radius widens this window slightly for
+    chests whose gimmick is >1.0u off the almanac point — cosmetic, closed by the next save.)
+  - **Fresh launch, before the first read.** The collected set starts empty and fills on the
+    first successful ContextDB read (reads soft-fail to "keep last set"); opened chests show
+    until then. But this clears within seconds and hits **every** opened chest at once, so a
+    single lingering marker after exploring is NOT this.
+
+**How to diagnose a specific recurrence** (reusable recipe, no in-repo tooling needed):
+identify the chest by position-matching the player's global (x,z) to the nearest chest almanac
+point (`data/almanac/{10,11,12,495,…}.json`, engine z is the almanac `y`). Then, for that
+chest's GUID, check **both** reads standalone against the live game (replicate the walks in
+`gimmickReader.js` / `contextDbReader.js`; player pos + `GimmickManager` offsets are in
+`src/main/index.js`). If ContextDB says "not opened" but you did open it, it's save-lag or a
+missing DB record; capture whether a save has happened since. Match the player position to the
+GUID first — the marker you followed and the DB record must be the **same** chest.
 
 ### AR collectibles — session complete (2026-07-18)
 

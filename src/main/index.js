@@ -7,7 +7,7 @@ const overlayConfig = require('./overlayConfig');
 const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
-const { createTracker, floorOf } = require('./areaTracker');
+const { createTracker } = require('./areaTracker');
 const { createLocalAreaReader } = require('./localAreaReader');
 const timeReader = require('./timeReader');
 const cameraFrameReader = require('./cameraFrameReader');
@@ -204,7 +204,6 @@ let lastAreaKey = null;              // for edge detection on the broadcast
 // See localAreaReader.js and .map/README.md.
 let localAreas = null;
 let localAreaReader = null;
-const AREA_TRUST = 0.30;             // min match score to trust a solved inset transform
 // Whether the baked overworld edge map (userData/edge/world.png) exists. Set at boot. When
 // true, the overlay's F9 draws OUR world edge art (id -1) over the whole world box instead
 // of mapgenie's raster; when false, the pointer reads -1 but we leave mapgenie's raster up
@@ -215,22 +214,7 @@ let hasWorldEdge = false;
 // (bakeTownEdges.py, placed at the solved texBox) vs falling back to the world edge.
 const bakedEdgeIds = new Set();
 
-// Fold the shipped LocalArea transforms into the `areas` state the renderers consume, so
-// forArea(cal, areas, String(localArea)) resolves them. Only trustworthy placements get a
-// transform; a low-score dungeon still gets its NAME (from the pointer) but no transform,
-// so forArea returns null and the marker is held rather than drawn confidently wrong.
-function mergeLocalAreas() {
-  if (!localAreas) return;
-  if (!areas.insetLinear && localAreas.insetLinear) areas.insetLinear = localAreas.insetLinear;
-  for (const [la, v] of Object.entries(localAreas.byLocalArea || {})) {
-    if (v.score >= AREA_TRUST && typeof v.c === 'number' && typeof v.f === 'number') {
-      areas.areas[la] = { c: v.c, f: v.f, name: v.title, floor: v.floorLabel || '', src: 'game' };
-    }
-  }
-}
-
 function pushAreas() {
-  tracker.setHeights(areas.floorHeights);   // where each floor sits, in game units
   tracker.setPlaces(areas.places);          // the buildings you've named with Home
   broadcast('areas:state', areas);
 }
@@ -306,188 +290,9 @@ function describeHint(h) {
         detail: nearestPlace || "mapgenie's portal graph hasn't loaded yet",
         actions: [remember].filter(Boolean),
       };
-    case 'floor-unknown':
-      return {
-        code: h.code,
-        title: `${h.name}${floor} — this floor has never been placed`,
-        detail: `you're at height ${h.height.toFixed(1)}`,
-        actions: [`${keys.floorUp} / ${keys.floorDown} — name the floor you're on`],
-      };
-    case 'floor-off':
-      return {
-        code: h.code,
-        title: `${h.name} — the floor may be wrong`,
-        detail: `showing ${h.floor || 'the only floor'} (sits at ${h.sits.toFixed(1)}); `
-          + `you're at ${h.height.toFixed(1)}, ${h.off.toFixed(1)}u off — no floor we know `
-          + 'fits that',
-        actions: [`${keys.floorUp} / ${keys.floorDown} — name the floor you're on`],
-      };
     default:
       return null;
   }
-}
-
-// The shared inset linear part, measured from mapgenie's own data — no calibration.
-//
-// The insets share the world map's rotation exactly and differ only by a uniform
-// scale, and that scale is recoverable from the portal graph: a dungeon with two
-// entrances gives two free correspondences, and the ratio between the inset
-// displacement and the one the world affine predicts IS the scale. (Measured: ~1.97,
-// i.e. the insets are drawn at twice the world's scale.) See areaStore.
-//
-// So dungeons work with nothing asked of the player. A hand calibration inside a
-// dungeon still overrides this — that's how you'd correct it if it were ever wrong.
-function ensureInsetLinear() {
-  if (areas.insetLinear && !areas.insetLinear.derived) return;  // hand-set: leave it
-  if (!areaMeta) return;
-  const worldCal = loadCalibration();
-  const derived = areaStore.deriveInsetLinear(areaMeta, worldCal);
-  if (!derived) return;
-  const prev = areas.insetLinear && areas.insetLinear.scale;
-  if (prev && Math.abs(prev - derived.scale) < 1e-6) return;  // unchanged; don't churn
-  areas.insetLinear = derived;
-  areaStore.save(areas);
-  pushAreas();
-  console.log(
-    `[areas] inset scale derived from the portal graph: ${derived.scale.toFixed(3)}x ` +
-    `the world map (${derived.samples} entrance pairs). No calibration needed — ` +
-    'walk into any dungeon and it places itself.',
-  );
-}
-
-// A crossing is a free correspondence: standing in the doorway, we know both the
-// player's world position AND (from mapgenie's portal graph) exactly where that
-// doorway comes out on the inset. With the shared linear part that's the entire
-// transform, so an unvisited dungeon calibrates itself the moment you walk in.
-function absorbAnchor() {
-  const anchor = tracker.takeAnchor();
-  if (!anchor) return;
-  if (!areas.insetLinear) {
-    // Only reachable if the inset scale couldn't be derived — which needs the world
-    // map calibrated, since the whole measurement is made against that affine.
-    console.log(
-      `[areas] entered "${anchor.name}" but there's no inset scale to place it with. ` +
-      'Calibrate the world map first (the scale is measured against it), or set it by ' +
-      'hand with the 3-point flow inside a dungeon.',
-    );
-    return;
-  }
-  const existing = areas.areas[anchor.areaKey];
-  if (existing && !existing.auto) return;  // hand-calibrated: never overwrite it
-
-  const { c, f } = areaStore.solveTranslation(areas.insetLinear, anchor);
-  areas.areas[anchor.areaKey] = {
-    subregionId: anchor.subregionId,
-    floor: anchor.floor,
-    name: anchor.name,
-    c,
-    f,
-    auto: true,
-    // How far you stood from that doorway when the game said "inside". It IS the
-    // anchor's error, so it's the error of this whole transform — worth keeping next to
-    // it, so a placement that later looks off can be explained rather than re-guessed.
-    // The tracker won't hand over an anchor beyond `dungeonEnterRadius` unless you
-    // forced the entry with Insert, so a large number here means you insisted.
-    dist: anchor.dist,
-    points: [{ gameX: anchor.gameX, gameY: anchor.gameY, lng: anchor.lng, lat: anchor.lat }],
-  };
-  areaStore.save(areas);
-  pushAreas();
-  console.log(
-    `[areas] auto-calibrated "${anchor.name}" ${anchor.floor} from the crossing ` +
-    `(${anchor.dist.toFixed(1)}u from the nearest known doorway)`,
-  );
-}
-
-// Where a floor SITS, in game units — the one thing that can tell floors apart, because
-// the game reports the same (x, y) on every floor of a dungeon and they differ in z alone.
-//
-// Learned from you: stand on a floor, press PageUp/PageDown to name it, and once your
-// height settles it's recorded for this dungeon. From then on your height picks the floor
-// by itself. Averaged over visits, so a second pass sharpens it rather than replacing it.
-function absorbHeight() {
-  const m = tracker.takeHeight();
-  if (!m) return;
-  areas.floorHeights[m.areaKey] = { h: m.h, n: m.n };
-  areaStore.save(areas);
-  pushAreas();
-  const area = areas.areas[m.areaKey];
-  const label = area ? `${area.name} ${area.floor}`.trim() : m.areaKey;
-  console.log(
-    `[areas] ${label} sits at height ${m.h.toFixed(1)} `
-    + `(measured ${m.sample.toFixed(1)}${m.n > 1 ? `, averaged over ${m.n} visits` : ''})`,
-  );
-}
-
-// A floor reached only by STAIRS has no entrance, so no free anchor from a doorway
-// crossing ever lands on it. Left alone it stays uncalibrated forever: the marker simply
-// vanishes when you go up there, and Refine can't rescue it either (Refine SHIFTS an
-// existing transform — there'd be nothing to shift). Every upper floor would be dead.
-//
-// But pressing PageUp/PageDown is an assertion: you just took a stair, so you're standing
-// at the end of it. mapgenie knows where that stair comes out on the destination panel
-// (203 internal portal edges). So the crossing is a free correspondence, exactly like
-// walking in the front door — the same trick, one level down.
-//
-// Which stair? The one whose near side you're standing on. The floor you just LEFT is
-// calibrated (that's how you got here), so inverting ITS transform puts all of its stairs
-// in game coords, and the nearest is the one you took. The chain bootstraps itself:
-// entrance places floor 1, floor 1's stairs place floor 2, and so on.
-function absorbFloorAnchor() {
-  const req = tracker.takeFloorAnchor();
-  if (!req || !areaMeta || !areas.insetLinear) return;
-  const existing = areas.areas[req.areaKey];
-  if (existing && typeof existing.c === 'number') return;  // already placed; nothing to do
-
-  // The stairs on the floor we just left that lead to the one we're now on.
-  const stairs = areaMeta.portals.filter((p) => (
-    p.fromRegion === req.subregionId
-    && p.toRegion === req.subregionId
-    && floorOf(p.fromTitle) === req.fromFloor
-    && floorOf(p.toTitle) === req.toFloor
-  ));
-  if (!stairs.length) {
-    console.log(
-      `[areas] ${req.name} ${req.toFloor} has no transform yet, and mapgenie lists no ` +
-      `stair from ${req.fromFloor || 'this floor'} to it — the marker can't be placed there. ` +
-      'Calibrate it by hand (3-point) while standing on it.',
-    );
-    return;
-  }
-
-  // Pick the stair we actually took: invert the floor we came FROM (it's calibrated —
-  // that's how we got here) to place its stairs in game coords, and take the nearest.
-  const fromAffine = areaStore.affineFor(areas, `${req.subregionId}|${req.fromFloor}`);
-  let best = stairs[0];
-  let bestDist = null;
-  if (fromAffine && stairs.length > 1) {
-    for (const s of stairs) {
-      const g = areaStore.invert(fromAffine, s.fromLng, s.fromLat);
-      if (!g) continue;
-      const d = Math.hypot(req.gameX - g.x, req.gameY - g.y);
-      if (bestDist === null || d < bestDist) { bestDist = d; best = s; }
-    }
-  }
-
-  // You are standing where that stair comes out. Pair it with your world position.
-  const { c, f } = areaStore.solveTranslation(areas.insetLinear, {
-    gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat,
-  });
-  areas.areas[req.areaKey] = {
-    subregionId: req.subregionId,
-    floor: req.toFloor,
-    name: req.name,
-    c,
-    f,
-    auto: true,
-    points: [{ gameX: req.gameX, gameY: req.gameY, lng: best.toLng, lat: best.toLat }],
-  };
-  areaStore.save(areas);
-  pushAreas();
-  const via = bestDist === null
-    ? ''
-    : ` (matched the stair you took, ${bestDist.toFixed(0)}u away of ${stairs.length})`;
-  console.log(`[areas] placed "${req.name}" ${req.toFloor} from the stair crossing${via}`);
 }
 
 // Both the main window and the overlay run the same follow loop off this feed.
@@ -648,9 +453,6 @@ function startMemoryPolling() {
       // Which area are we in? Ticked here rather than in a renderer because both
       // windows need the same answer and neither may disagree with the other.
       const area = tracker.tick({ x: g.x, y: g.y, height, insideFlag, zoneIndex, roomHash });
-      absorbAnchor();
-      absorbHeight();
-      absorbFloorAnchor();
 
       // PRIMARY area source: the game's own current-area record. When it names a
       // dungeon/interior (localArea >= 0) it overrides the tracker's guess for both the
@@ -1013,14 +815,11 @@ function registerHotkeys() {
   // see areaTracker. What is drained here is the stair crossing, which places a floor
   // that has no entrance of its own, so the map is right by the time you release the key.
   const announce = (area) => {
-    absorbFloorAnchor();
     console.log(`[areas] manual: ${area ? `${area.name} ${area.floor}`.trim() : 'overworld'}`);
   };
   bind(cfg.hotkeys.areaToggle, 'enter/exit dungeon', () => announce(tracker.toggle()));
   // rememberPlace (Home) is unassigned now — bind() skips a null accelerator.
   bind(cfg.hotkeys.rememberPlace, 'remember this building', rememberPlace);
-  bind(cfg.hotkeys.floorUp, 'floor up', () => announce(tracker.stepFloor(1)));
-  bind(cfg.hotkeys.floorDown, 'floor down', () => announce(tracker.stepFloor(-1)));
 }
 
 // Alt (mouse capture, now a TOGGLE) and game-focus follow. Both have to be POLLED:
@@ -1162,10 +961,9 @@ ipcMain.handle('calibration:load', () => loadCalibration());
 ipcMain.handle('calibration:save', (_event, data) => {
   saveCalibration(data);
   // The doorways live in GAME coords, derived by inverting this affine — so a
-  // recalibration or a Refine moves every one of them. The derived inset scale is
-  // measured against this affine too, so it has to be re-derived.
+  // recalibration or a Refine moves every one of them. The dungeon inset transforms are
+  // authored (dungeons.json) and absolute, so they do NOT track the world affine.
   tracker.setWorldCalibration(data);
-  ensureInsetLinear();
   return true;
 });
 
@@ -1197,7 +995,6 @@ ipcMain.handle('areas:metadata', (_event, meta) => {
     `[areas] ${tracker.doorCount()} dungeon doorways and ${tracker.poiCount()} named places `
     + 'placed in game coords',
   );
-  ensureInsetLinear();
   return true;
 });
 
@@ -1254,53 +1051,18 @@ const contextSpecs = [
 // rely on position + the shared GimmickBase "interacted" byte (their runtime type varies).
 const gimmickSpecs = [
   { pois: arBeetle.pois, flagOffset: 0x3e4, collectedValue: 1, vtableTypeIndex: stType('app.Gm82_009') },
-  { pois: arChest.pois, flagOffset: 0x374, collectedValue: 1 },
+  // Tight matchRadius (not the shared 2.5u): chests aren't vtable-filtered, so a loose
+  // radius attributes an UNRELATED neighbour gimmick's +0x374 to the closed chest and hides
+  // its marker on approach. The chest's own gimmick sits ~0u from the almanac point; false
+  // neighbours were measured at ~2u. A missed live match is backstopped by contextDbReader
+  // after save, so erring tight only delays the hide — it never falsely hides. See FINDINGS.
+  { pois: arChest.pois, flagOffset: 0x374, collectedValue: 1, matchRadius: 1.0 },
 ];
 
-// Seeds the shared inset scale/rotation from a 3-point calibration run inside one
-// dungeon, and stores that dungeon as hand-calibrated. Every OTHER dungeon then
-// needs no clicks at all — the crossing anchor plus this linear part is the whole
-// transform.
-// A hand calibration inside a dungeon. No longer REQUIRED — the inset scale is
-// derived from the portal graph on its own — but kept as the way to measure it
-// properly and to override the derivation if it's ever wrong.
-//
-// It also reports the fitted scale against the derived one, which is the experiment
-// that tells us whether the derivation can be trusted.
-ipcMain.handle('areas:calibrate', (_event, { areaKey, area, linear }) => {
-  if (!areaKey || !area || !linear) return false;
-  const worldCal = loadCalibration();
-  const measured = areaStore.scaleOf(linear, worldCal);
-  const derived = areas.insetLinear && areas.insetLinear.scale;
+// Dungeon inset transforms are authored in config/dungeons.json (app read-only) and edited
+// by the RE tooling / by hand — there is no in-app dungeon calibration or Refine any more.
+// Only the OVERWORLD affine is calibrated in-app (calibration:save above).
 
-  areas.insetLinear = { ...linear, scale: measured, derived: false };
-  areas.areas[areaKey] = { ...area, auto: false };
-  areaStore.save(areas);
-  pushAreas();
-
-  const cmp = (derived && measured)
-    ? ` — measured ${measured.toFixed(3)}x the world map, vs ${derived.toFixed(3)}x derived ` +
-      `from the portal graph (${(100 * Math.abs(measured - derived) / derived).toFixed(1)}% apart)`
-    : '';
-  console.log(`[areas] inset scale set by hand from "${area.name}"${cmp}`);
-  return { measured, derived };
-});
-
-// Refine, inside a dungeon: nudge the area's translation. Deliberately NOT the
-// overworld's accumulate-and-re-fit behaviour — the linear part is shared and
-// already known, so there is nothing left to fit. Only the offset can be wrong, and
-// a straight shift is both what's needed and what lets you drag yourself back into
-// place when a crossing anchor lands slightly off.
-ipcMain.on('areas:shift', (_event, { areaKey, dLng, dLat }) => {
-  const area = areas.areas[areaKey];
-  if (!area || !Number.isFinite(dLng) || !Number.isFinite(dLat)) return;
-  area.c += dLng;
-  area.f += dLat;
-  area.auto = false;  // you moved it by hand; a later crossing must not undo that
-  areaStore.save(areas);
-  pushAreas();
-  console.log(`[areas] shifted "${area.name}" ${area.floor}`.trim());
-});
 ipcMain.handle('view:load', () => loadView());
 ipcMain.handle('view:save', (_event, data) => {
   saveView(data);
@@ -1335,23 +1097,23 @@ app.whenReady().then(() => {
     }
   });
 
-  // Areas: the saved per-dungeon transforms, the world affine the doorways are
-  // derived from, and the cached portal graph. The cache means the doorways are live
-  // from the first tick, before the mapgenie guest has even finished loading.
-  areas = areaStore.load();
+  // Areas: the AUTHORED dungeon transforms (dungeons.json, read-only) + the runtime
+  // `places` (areas.json), plus the world affine and cached portal graph. The dungeon
+  // transforms are the single source of truth now — the app never writes them, so nothing
+  // can clobber a tuned placement on restart (see FINDINGS).
+  const dungeons = areaStore.loadDungeons();
+  areas = { insetLinear: dungeons.insetLinear, areas: dungeons.areas, places: areaStore.load().places };
   // The game-derived area table + pointer chains (shipped, universal). If either is
   // missing the reader stays null and we run on the old tracker alone.
   localAreas = configStore.load('localAreas');
   const chainCfg = configStore.load('dd2.localarea');
   if (localAreas && chainCfg) {
-    mergeLocalAreas();
     try {
       localAreaReader = createLocalAreaReader(chainCfg, localAreas);
     } catch (err) {
       console.log(`[areas] pointer reader disabled: ${err.message}`);
     }
   }
-  tracker.setHeights(areas.floorHeights);
   tracker.setEnterRadius(cfg.dungeonEnterRadius);  // how near a doorway "inside" must be
   tracker.setPlaceRadius(cfg.placeRadius);         // ...and how big a building is
   tracker.setPlaces(areas.places);                 // the buildings you've already named
@@ -1360,7 +1122,6 @@ app.whenReady().then(() => {
   if (cachedMeta) {
     areaMeta = cachedMeta;
     tracker.setMetadata(cachedMeta);
-    ensureInsetLinear();  // so dungeons work from the first tick, before mapgenie loads
   }
 
   createWindow();

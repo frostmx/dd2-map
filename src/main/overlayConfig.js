@@ -11,12 +11,10 @@ const DEFAULTS = {
     baseMap: 'F9',
     zoomOut: 'F10',
     zoomIn: 'F11',
-    // Manual area override. In/out is read straight from the game (see
-    // areaTracker.js), so this is mainly for the one thing that isn't: dropping
-    // through a hole to the floor below without ever crossing a portal.
+    // Manual area override. In/out is read straight from the game (see areaTracker.js),
+    // so this is only for the two dungeons mapgenie has no entrance for, where the
+    // nearest-entrance guess has nothing right to pick.
     areaToggle: 'Insert',
-    floorUp: 'PageUp',
-    floorDown: 'PageDown',
     // rememberPlace (Home) is unassigned: the pointer names buildings now, so the manual
     // "this interior is that building" bind is no longer needed. null = bind() skips it.
     rememberPlace: null,
