@@ -87,10 +87,12 @@ drift apart.
   **renderer**.
 - **Dungeon insets** — `config/areas.json`. mapgenie draws each dungeon as an inset
   panel off to the side of the world map, in the same lng/lat plane, while DD2 keeps
-  reporting ordinary world coords inside caves. Every inset shares **one** linear
-  part (`insetLinear`) and differs only by translation, so **one** correspondence
+  reporting ordinary world coords inside caves. **Almost** every inset shares **one**
+  linear part (`insetLinear`) and differs only by translation, so **one** correspondence
   pins a dungeon — and walking through a doorway supplies that correspondence for
-  free. Written by **main** (`areaStore.js`).
+  free. A few are drawn at their own scale (Ancestral Chamber's inset is ~0.68× the
+  shared scale); those carry an optional per-area `scale` that `forArea` multiplies into
+  the shared linear (absent → 1). Written by **main** (`areaStore.js`).
 
 Two files with one writer each, deliberately: a single file with two writers would
 let a Refine clobber every dungeon you'd calibrated.

@@ -373,6 +373,23 @@ layer. Two things that cost debugging:
   `scale ×= 1.048` would tighten every inset but requires re-deriving all `c,f`, so it was
   left as a deliberate future option, not done.
 
+  **Per-area scale — not every inset shares the scale (2026-07-19).** Ancestral Chamber
+  (LA 545) is a genuine outlier: its mapgenie inset is drawn at **~0.68×** the shared
+  scale, not the ~2.0 the other 15 agree on. In-game its marker drifted right OUT of the
+  panel toward the SW while the player stood at the SW entrance — a marker over-spreading
+  from its anchored centre, i.e. the transform scale was too large. `forArea` now takes an
+  optional per-area `scale` that multiplies the shared linear (absent → 1, so the other 121
+  areas are untouched); Ancestral carries `scale:0.68` with `c`/`f` recomputed
+  centre-preserving. Verified in-game: marker aligns, edge still good.
+
+  **The MARKER, not the edge, is the sensitive test for scale.** The edge art is an image
+  stretched to fill `transform(box)`'s four corners, so a wrong scale still "looks perfect"
+  — it just fills a slightly-too-big rectangle over a large panel. The marker maps a single
+  live point through the same transform, so any scale error shows as drift that grows with
+  distance from the anchor. A dungeon can read "edge perfect, marker outside the panel"; that
+  combination means *scale*, and per-area `scale` is the fix (an offset instead would need the
+  box corrected, and would break the edge when the marker is aligned).
+
   **Re-keying (2026-07-19).** The pointer stamps `areaKey = String(localArea)` and
   `forArea` looks up `areas.areas[areaKey]` directly, so a token entry keyed by
   **subregion** (`2492|`) is never found — the pointer emits the **LocalArea** (`512`).
