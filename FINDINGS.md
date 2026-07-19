@@ -366,12 +366,23 @@ layer. Two things that cost debugging:
   from `tiles.mapgenie.io` (serves 200 with no auth/Referer). Placements are `src:"aligned"`.
 
   **The aligner exports a CENTER-anchored translation** and is scale-invariant on purpose:
-  `insetLinear.scale` (1.9225) is a hair small — the user needed art-scale **1.048 on 15 of
-  16** floors to make edges meet (Ancestral Chamber was the lone outlier at 0.68 — its baked
-  box is much larger than its drawn panel). Anchoring on the box center puts the marker where
-  the player actually walks and splits the residual scale drift to the edges. A global
-  `scale ×= 1.048` would tighten every inset but requires re-deriving all `c,f`, so it was
-  left as a deliberate future option, not done.
+  `insetLinear.scale` (1.9225) was a hair small — the user needed art-scale **1.048 on 15 of
+  16** floors to make edges meet (Ancestral was the lone outlier at 0.68; see per-area scale
+  below). Anchoring on the box center put the marker where the player walks and split the
+  residual drift to the edges.
+
+  **Global 2.0 rescale — DONE (2026-07-19).** 1.9225 × 1.048 ≈ 2.0, the clean value mapgenie
+  actually draws insets at. A center-preserving rescale of the shared linear (`a,b,d,e ×=
+  2.0/1.9225`) with each area's `c,f` re-derived so its **box centre maps to the identical
+  lng/lat** — every marker stays put, only edge-fit tightens (~4%). Categories: 126 boxed
+  areas rescaled; Ancestral's per-area `scale` divided by g to hold its effective 1.31 scale;
+  4 boxless legacy entries exempted (`scale = 1/g`, byte-identical); **7 stale subregion-keyed
+  duplicates deleted** (Forgotten Tunnel/Trevo/Gracious Vaults/Ancestral — all superseded by
+  LocalArea-keyed entries). **`insetLinear.derived` set to `false`** — essential, or
+  `ensureInsetLinear` (index.js) re-derives it back to ~1.9225 on next launch and silently
+  breaks every rescaled `c,f`. Script verified all 131 centres/transforms unchanged before
+  writing. (Deferred: the 4 exempt legacy entries could be properly rescaled once their boxes
+  are recovered from `areaTable`.)
 
   **Per-area scale — not every inset shares the scale (2026-07-19).** Ancestral Chamber
   (LA 545) is a genuine outlier: its mapgenie inset is drawn at **~0.68×** the shared
