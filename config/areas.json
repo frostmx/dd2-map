@@ -44,6 +44,13 @@
       "floor": "B1F",
       "src": "tokens"
     },
+    "338": {
+      "c": -0.770121,
+      "f": 0.751865,
+      "name": "Forbidden Magick Research Lab",
+      "floor": "1F",
+      "src": "aligned"
+    },
     "341": {
       "c": -0.5924633152467759,
       "f": 0.760452692612177,
@@ -520,6 +527,13 @@
       "floor": "1F",
       "src": "game"
     },
+    "451": {
+      "c": -0.66748,
+      "f": 0.580524,
+      "name": "Ancient Battleground",
+      "floor": "2F",
+      "src": "aligned"
+    },
     "473": {
       "c": -0.6381204840339463,
       "f": 0.7438248356995165,
@@ -597,6 +611,30 @@
       "floor": "1F",
       "src": "game"
     },
+    "512": {
+      "subregionId": 2492,
+      "floor": "B1F",
+      "name": "Guerco Cavern",
+      "c": -0.5014973894182436,
+      "f": 0.30954499530557633,
+      "auto": false,
+      "src": "tokens",
+      "points": [
+        {
+          "gameX": -930.7362,
+          "gameY": -730.5226,
+          "lng": -0.65499007701951,
+          "lat": 0.42976900257366
+        }
+      ]
+    },
+    "513": {
+      "c": -0.507329,
+      "f": 0.311137,
+      "name": "Guerco Cavern",
+      "floor": "1F",
+      "src": "aligned"
+    },
     "515": {
       "c": -0.36039262698879015,
       "f": 0.6529778099516041,
@@ -653,6 +691,13 @@
       "floor": "",
       "src": "game"
     },
+    "545": {
+      "c": -0.671766,
+      "f": 0.617588,
+      "name": "Ancestral Chamber",
+      "floor": "",
+      "src": "aligned"
+    },
     "547": {
       "c": -1.130877662821909,
       "f": 0.5336088030415385,
@@ -666,6 +711,20 @@
       "name": "Mountain Shrine",
       "floor": "2F",
       "src": "game"
+    },
+    "549": {
+      "c": -0.724854,
+      "f": 0.990868,
+      "name": "Drabnir's Grotto",
+      "floor": "B2F",
+      "src": "aligned"
+    },
+    "550": {
+      "c": -0.696693,
+      "f": 0.58134,
+      "name": "Worldsend Cavern",
+      "floor": "B1F",
+      "src": "aligned"
     },
     "551": {
       "c": -0.6532864231711368,
@@ -688,12 +747,47 @@
       "floor": "",
       "src": "game"
     },
+    "557": {
+      "c": -0.722946,
+      "f": 0.977739,
+      "name": "Drabnir's Grotto",
+      "floor": "B1F",
+      "src": "aligned"
+    },
+    "558": {
+      "c": -0.721252,
+      "f": 0.948972,
+      "name": "Drabnir's Grotto",
+      "floor": "1F",
+      "src": "aligned"
+    },
+    "559": {
+      "c": -0.721208,
+      "f": 0.958542,
+      "name": "Drabnir's Grotto",
+      "floor": "2F",
+      "src": "aligned"
+    },
+    "566": {
+      "c": -0.694355,
+      "f": 0.57603,
+      "name": "Worldsend Cavern",
+      "floor": "1F",
+      "src": "aligned"
+    },
     "581": {
       "c": -0.7158956197855162,
       "f": 0.5916407999047555,
       "name": "Nameless Village Depths",
       "floor": "",
       "src": "game"
+    },
+    "593": {
+      "c": -0.685684,
+      "f": 0.697787,
+      "name": "Moonglint Tower",
+      "floor": "1F",
+      "src": "aligned"
     },
     "594": {
       "c": -0.61826160630523,
@@ -716,6 +810,20 @@
       "floor": "4F",
       "src": "game"
     },
+    "603": {
+      "c": -0.379665,
+      "f": 0.630949,
+      "name": "Seafloor Shrine",
+      "floor": "B1F",
+      "src": "aligned"
+    },
+    "604": {
+      "c": -0.38166,
+      "f": 0.643744,
+      "name": "Seafloor Shrine",
+      "floor": "1F",
+      "src": "aligned"
+    },
     "627": {
       "c": -0.5180787908570775,
       "f": 0.6231985866317913,
@@ -736,6 +844,27 @@
       "name": "The Gracious Hand's Vaults",
       "floor": "2F",
       "src": "game"
+    },
+    "632": {
+      "c": -0.902374,
+      "f": 0.428917,
+      "name": "Trevo Mine",
+      "floor": "B1F",
+      "src": "aligned"
+    },
+    "633": {
+      "c": -0.902942,
+      "f": 0.42999,
+      "name": "Trevo Mine",
+      "floor": "1F",
+      "src": "aligned"
+    },
+    "634": {
+      "c": -0.890747,
+      "f": 0.427273,
+      "name": "Trevo Mine",
+      "floor": "2F",
+      "src": "aligned"
     },
     "635": {
       "c": -0.5771339432685809,
@@ -941,23 +1070,6 @@
           "gameY": -2651.551,
           "lng": -0.4507398605345,
           "lat": 0.91079690461609
-        }
-      ]
-    },
-    "2492|": {
-      "subregionId": 2492,
-      "floor": "",
-      "name": "Guerco Cavern",
-      "c": -0.5014973894182436,
-      "f": 0.30954499530557633,
-      "auto": false,
-      "src": "tokens",
-      "points": [
-        {
-          "gameX": -930.7362,
-          "gameY": -730.5226,
-          "lng": -0.65499007701951,
-          "lat": 0.42976900257366
         }
       ]
     }

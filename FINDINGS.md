@@ -340,8 +340,47 @@ layer. Two things that cost debugging:
   via `FileReader`, caches it per floor, and hands *that* to the guest. A `data:` URL also
   survives the host→`<webview>` boundary; a `blob:` URL would not (origin-scoped).
 - The edge only shows for a **placeable** dungeon — one with a transform in `areas.areas`.
-  `AREA_TRUST` (0.30) gates game-derived transforms out of the merge, so ~18 low-score
-  dungeons have valid `c`/`f` but no marker and no edge. (Not yet resolved; see TODO.)
+  `AREA_TRUST` (0.30) gates game-derived transforms out of the merge, so the low-score
+  dungeons had valid `c`/`f` but no marker and no edge. **RESOLVED 2026-07-19** by manual
+  edge-map matching (below); the gate itself is unchanged and still correct.
+
+  **Do NOT "fix" this by trusting `src:'game'` regardless of score** (the older
+  `.map/IMPLEMENTATION_STATUS.md` fix direction — it is unsafe). The gated set was
+  *dominated by the false-match-magnet subregions that section itself named*, and the
+  correlation's error was worse than "imprecise translation": for 11 of 16 gated floors it
+  had picked the **wrong subregion entirely**. And because `sweepAreas.py` takes an area's
+  `title` FROM the matched subregion (`title = subs[sid]["title"]`), a wrong match stamped a
+  wrong **name too** — four distinct game dungeons all read "Twilight Cave". So a low score
+  there is a wrong panel, not an under-confident right one; blanket-trust would have placed
+  and *misnamed* them.
+
+  **How they were placed — manual edge-map matching (2026-07-19).** The baked edge PNGs
+  ARE the game's dungeon linework, so the human eye can do what the correlation failed at:
+  match each floor's linework to the right mapgenie inset. A throwaway gallery page
+  (`edge PNGs on a light bg`) got the **subregion+floor corrections**; the floor *labels*
+  were already right (game height data), only subregion+title were wrong. Those 11
+  corrections went into `localAreas.json` (subregionId+title). Then a **drag-to-align tool**
+  (a manual `matchInset`: mapgenie tiles as backdrop, our edge art overlaid at `insetLinear`
+  scale, drag to fit → reads `c,f` off the alignment) placed all 16 precisely. Both pages
+  were generated offline from `config/*` + `userData/edge/*.png`; tiles fetched at runtime
+  from `tiles.mapgenie.io` (serves 200 with no auth/Referer). Placements are `src:"aligned"`.
+
+  **The aligner exports a CENTER-anchored translation** and is scale-invariant on purpose:
+  `insetLinear.scale` (1.9225) is a hair small — the user needed art-scale **1.048 on 15 of
+  16** floors to make edges meet (Ancestral Chamber was the lone outlier at 0.68 — its baked
+  box is much larger than its drawn panel). Anchoring on the box center puts the marker where
+  the player actually walks and splits the residual scale drift to the edges. A global
+  `scale ×= 1.048` would tighten every inset but requires re-deriving all `c,f`, so it was
+  left as a deliberate future option, not done.
+
+  **Re-keying (2026-07-19).** The pointer stamps `areaKey = String(localArea)` and
+  `forArea` looks up `areas.areas[areaKey]` directly, so a token entry keyed by
+  **subregion** (`2492|`) is never found — the pointer emits the **LocalArea** (`512`).
+  Guerco was re-keyed `2492|`→`512` (its subregion 2492 maps to exactly one LocalArea).
+  Waterfall Cave (`2455|1F/2F`) and Rock Wall Berme (`2531|`) can't be re-keyed the same
+  way: **no current LocalArea carries their subregion or title at all** — they're orphaned
+  by a since-changed LocalArea→subregion mapping, reachable only via the deprecated tracker
+  fallback. Placing them needs their LocalArea id first.
 
 ### Found POIs are a paint expression, not a layer (and not filterable)
 mapgenie has no separate layer for locations you've marked found — it fades them
@@ -1040,9 +1079,10 @@ correlation loses to an exact game coordinate, rule 2 beats a failed rule 1).
 - Trembling Hollow 2F token (mapgenie id 330232) sits ~60u off the *trusted* LocalArea
   solves for 418/419. The trusted solves win; the marker is misplaced.
 - Guerco Cavern token (330589, "down in the ravine") is 255u from the score-0.299 B1F
-  solve — the solve is below trust, so the token won (see trust ordering above); written
-  as `2492|` with floor `''`. If the correlation solver later scores Guerco ≥ trust and
-  disagrees, the solver wins and this entry should go.
+  solve — the solve is below trust, so the token won (see trust ordering above). Keyed
+  `512` with floor `B1F` (re-keyed 2026-07-19 from the subregion form `2492|`, which the
+  pointer never looks up — see "Re-keying" below). If the correlation solver later scores
+  Guerco ≥ trust and disagrees, the solver wins and this entry should go.
 - Two tokens (330995, 331021) fall inside no inset bbox at all.
 
 **Stale numeric entries in `areas.json`.** The `src: "game"` numeric keys are a snapshot

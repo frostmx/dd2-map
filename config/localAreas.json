@@ -130,8 +130,8 @@
    ]
   },
   "338": {
-   "subregionId": 2493,
-   "title": "Coral Snakes' Hideout",
+   "subregionId": 2488,
+   "title": "Forbidden Magick Research Lab",
    "floorNo": 0,
    "floorLabel": "1F",
    "isDungeon": true,
@@ -1043,8 +1043,8 @@
    "uiArea": 1008
   },
   "451": {
-   "subregionId": 2486,
-   "title": "Worldsend Cavern",
+   "subregionId": 2487,
+   "title": "Ancient Battleground",
    "floorNo": 1,
    "floorLabel": "2F",
    "isDungeon": true,
@@ -1233,8 +1233,8 @@
    "uiArea": 1022
   },
   "513": {
-   "subregionId": 2466,
-   "title": "Twilight Cave",
+   "subregionId": 2492,
+   "title": "Guerco Cavern",
    "floorNo": 0,
    "floorLabel": "1F",
    "isDungeon": true,
@@ -1671,8 +1671,8 @@
    "uiArea": 1015
   },
   "559": {
-   "subregionId": 2488,
-   "title": "Forbidden Magick Research Lab",
+   "subregionId": 2442,
+   "title": "Drabnir's Grotto",
    "floorNo": 1,
    "floorLabel": "2F",
    "isDungeon": true,
@@ -2053,8 +2053,8 @@
    ]
   },
   "603": {
-   "subregionId": 2460,
-   "title": "Stormwind Cave",
+   "subregionId": 2579,
+   "title": "Seafloor Shrine",
    "floorNo": -1,
    "floorLabel": "B1F",
    "isDungeon": true,
@@ -2072,8 +2072,8 @@
    "uiArea": 1105
   },
   "604": {
-   "subregionId": 2460,
-   "title": "Stormwind Cave",
+   "subregionId": 2579,
+   "title": "Seafloor Shrine",
    "floorNo": 0,
    "floorLabel": "1F",
    "isDungeon": true,
@@ -2283,8 +2283,8 @@
    "uiArea": 1002
   },
   "632": {
-   "subregionId": 2466,
-   "title": "Twilight Cave",
+   "subregionId": 2441,
+   "title": "Trevo Mine",
    "floorNo": -1,
    "floorLabel": "B1F",
    "isDungeon": true,
@@ -2302,8 +2302,8 @@
    "uiArea": 1003
   },
   "633": {
-   "subregionId": 2448,
-   "title": "Depleted Ore Deposit",
+   "subregionId": 2441,
+   "title": "Trevo Mine",
    "floorNo": 0,
    "floorLabel": "1F",
    "isDungeon": true,
@@ -2321,8 +2321,8 @@
    "uiArea": 1003
   },
   "634": {
-   "subregionId": 2466,
-   "title": "Twilight Cave",
+   "subregionId": 2441,
+   "title": "Trevo Mine",
    "floorNo": 1,
    "floorLabel": "2F",
    "isDungeon": true,
@@ -2416,8 +2416,8 @@
    "uiArea": 3024
   },
   "550": {
-   "subregionId": 2466,
-   "title": "Twilight Cave",
+   "subregionId": 2486,
+   "title": "Worldsend Cavern",
    "floorNo": -1,
    "floorLabel": "B1F",
    "isDungeon": true,
@@ -2435,8 +2435,8 @@
    "uiArea": 1007
   },
   "566": {
-   "subregionId": 2465,
-   "title": "Darkhorde Cave",
+   "subregionId": 2486,
+   "title": "Worldsend Cavern",
    "floorNo": 0,
    "floorLabel": "1F",
    "isDungeon": true,
