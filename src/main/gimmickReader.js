@@ -89,6 +89,12 @@ function read(handle, moduleBase, frameOffset, specs) {
     if (typesPtr === 0n) return null;
 
     // Resolve each spec's optional vtable filter live, and pre-square its radius.
+    // A spec MAY override MATCH_RADIUS (spec.matchRadius): un-vtable-filtered specs (chests)
+    // need a TIGHT radius, because the chest gimmick sits ~0u from the almanac point while
+    // UNRELATED neighbour gimmicks (props/enemies, a different vtable) can sit ~2u away with
+    // their generic "interacted" byte +0x374 set — and a loose radius attributes that
+    // neighbour's flag to the still-closed chest, hiding its marker on approach. Measured
+    // in-game: false neighbours at 1.95u/2.40u, the real chest gimmick at 0.00u.
     const resolved = [];
     for (const s of specs) {
       if (!s.pois || !s.pois.length) continue;
@@ -97,7 +103,8 @@ function read(handle, moduleBase, frameOffset, specs) {
         vt = readPointer(handle, typesPtr + BigInt(s.vtableTypeIndex) * TYPE_ENTRY_SIZE + 0x40n);
         if (vt === 0n) return null;
       }
-      resolved.push({ pois: s.pois, flagOffset: BigInt(s.flagOffset), collectedValue: s.collectedValue, vt, r2: MATCH_RADIUS * MATCH_RADIUS });
+      const r = typeof s.matchRadius === 'number' ? s.matchRadius : MATCH_RADIUS;
+      resolved.push({ pois: s.pois, flagOffset: BigInt(s.flagOffset), collectedValue: s.collectedValue, vt, r2: r * r });
     }
     if (!resolved.length) return new Set();
 
