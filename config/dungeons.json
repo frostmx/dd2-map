@@ -1,8 +1,8 @@
 {
   "insetLinear": {
     "a": 0.00017151956164229506,
-    "b": 5.0065769333258736e-8,
-    "d": 2.807491444334082e-7,
+    "b": 0,
+    "d": 0,
     "e": -0.00017155999750844363,
     "scale": 2,
     "derived": false
@@ -11,33 +11,41 @@
     "147": {
       "name": "Depleted Ore Deposit",
       "floor": "1F",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "148": {
       "name": "Vernworth Castle",
       "floor": "2F",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "149": {
       "name": "Vernworth Castle",
       "floor": "B1F",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "150": {
       "name": "Vernworth Castle",
       "floor": "B2F",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "337": {
-      "c": -0.7618258892807215,
-      "f": 0.7622388691849148,
+      "c": -0.761985,
+      "f": 0.762052,
       "name": "Forbidden Magick Research Lab",
       "floor": "B1F",
-      "src": "tokens"
+      "src": "aligned"
     },
     "338": {
-      "c": -0.7629084757879383,
-      "f": 0.754175475183546,
+      "c": -0.762891,
+      "f": 0.753811,
       "name": "Forbidden Magick Research Lab",
       "floor": "1F",
       "src": "aligned"
@@ -45,553 +53,574 @@
     "341": {
       "name": "Waterfall Cave",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "342": {
-      "c": -0.7196811956861677,
-      "f": 0.49654852464552923,
+      "c": -0.719733,
+      "f": 0.496539,
       "name": "The Mountains' Secret",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "343": {
-      "c": -0.8156035005956809,
-      "f": 0.5540220770125176,
+      "c": -0.815689,
+      "f": 0.554008,
       "name": "Backwoods Nest",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "344": {
-      "c": -1.0106474465113175,
-      "f": 0.7070626491437053,
+      "c": -1.010744,
+      "f": 0.707482,
       "name": "Mt. Alles Tunnel",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "346": {
-      "c": -0.9615060302329894,
-      "f": 0.7327054772316821,
+      "c": -0.961676,
+      "f": 0.733001,
       "name": "Frightful Hollow",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "347": {
-      "c": -1.088290210370686,
-      "f": 0.799217855381379,
+      "c": -1.088304,
+      "f": 0.799381,
       "name": "Twilight Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "348": {
-      "c": -0.6853059521142209,
-      "f": 0.826655481165184,
+      "c": -0.685357,
+      "f": 0.826947,
       "name": "Spirits' Path",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "349": {
-      "c": -1.0086694472809563,
-      "f": 0.8117089940876089,
+      "c": -1.008764,
+      "f": 0.811407,
       "name": "Coastal Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "354": {
-      "c": -0.7434186430416412,
-      "f": 0.7535859299573259,
-      "name": "Enoa'Battahl Cavern",
+      "c": -0.900987,
+      "f": 0.783727,
+      "name": "Timeworn Shaft",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "355": {
-      "c": -0.6597766106537584,
-      "f": 0.7606137403404142,
+      "c": -0.659719,
+      "f": 0.760348,
       "name": "Collapsed Mine",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "358": {
-      "c": -0.7352003323755085,
-      "f": 0.7448964601881807,
+      "c": -0.73524,
+      "f": 0.744773,
       "name": "River's Edge Grotto",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "359": {
-      "c": -0.8140208977464286,
-      "f": 0.7105738845852588,
+      "c": -0.814201,
+      "f": 0.710435,
       "name": "Darkhorde Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "360": {
-      "c": -0.6885429039820862,
-      "f": 0.7182224837769847,
+      "c": -0.688546,
+      "f": 0.718348,
       "name": "Hidden Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "361": {
-      "c": -0.640625927188137,
-      "f": 0.6876032135750286,
+      "c": -0.640602,
+      "f": 0.687496,
       "name": "Rain Shelter Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "363": {
-      "c": -0.45519066057810514,
-      "f": 0.7783683068775127,
+      "c": -0.455391,
+      "f": 0.777817,
       "name": "Dead-End Curve",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "364": {
-      "c": -0.661907467732111,
-      "f": 0.8059192955706392,
-      "name": "Putrid Cave",
+      "c": -0.675879,
+      "f": 0.805614,
+      "name": "Rock Wall Berme",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "365": {
-      "c": -0.47608149716916986,
-      "f": 0.8194193698626565,
+      "c": -0.476037,
+      "f": 0.819149,
       "name": "Riverside Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "367": {
-      "c": -0.6309583491730214,
-      "f": 0.7632615550775292,
+      "c": -0.631104,
+      "f": 0.762612,
       "name": "Shrine Corridor",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "368": {
-      "c": -0.8630912368107244,
-      "f": 0.7974975620600623,
+      "c": -0.863051,
+      "f": 0.79787,
       "name": "Underbridge Grotto",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "369": {
-      "c": -0.254724345662233,
-      "f": 0.8978261887397139,
+      "c": -0.25478,
+      "f": 0.897284,
       "name": "Enoa'Battahl Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "370": {
-      "c": -0.47929790939910655,
-      "f": 0.9441322041993081,
+      "c": -0.47933,
+      "f": 0.943556,
       "name": "Rocky Crevasse",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "371": {
-      "c": -0.2987460037438031,
-      "f": 0.9734764166031454,
+      "c": -0.298609,
+      "f": 0.972887,
       "name": "Dimdark Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "373": {
-      "c": -0.29635978406331587,
-      "f": 0.9911461660998798,
+      "c": -0.296684,
+      "f": 0.990536,
       "name": "Holy Mausoleum Ruins",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "374": {
-      "c": -0.17660535964552623,
-      "f": 0.9411797863923425,
-      "name": "Enoa'Battahl Cavern",
+      "c": -0.188112,
+      "f": 0.972635,
+      "name": "Rocky Lair",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "375": {
-      "c": -0.1242838429474703,
-      "f": 0.969744511529792,
+      "c": -0.124072,
+      "f": 0.969031,
       "name": "Tomb of Te'Glarr",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "376": {
-      "c": -0.431139063865517,
-      "f": 1.0163236140065506,
+      "c": -0.431146,
+      "f": 1.015824,
       "name": "Highland Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "377": {
-      "c": -0.1639009946090948,
-      "f": 1.0120181896566443,
+      "c": -0.163784,
+      "f": 1.011355,
       "name": "Echoing Depths",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "378": {
-      "c": -0.23386775476453747,
-      "f": 1.0315139627753396,
+      "c": -0.233879,
+      "f": 1.030896,
       "name": "Sandsear Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "379": {
-      "c": -0.1453873565895988,
-      "f": 1.0365319624936493,
+      "c": -0.145373,
+      "f": 1.03602,
       "name": "Roadside Hollow",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "380": {
-      "c": -0.36757965891626043,
-      "f": 1.0247374666123217,
+      "c": -0.160155,
+      "f": 1.026588,
       "name": "Rain Shelter Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned",
+      "note": "unnamed cave (no name on mapgenie)"
     },
     "381": {
-      "c": -0.2584353086738618,
-      "f": 1.0553921275822111,
+      "c": -0.258391,
+      "f": 1.054957,
       "name": "Eremitic Sanctuary",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "382": {
-      "c": -0.10699497516264625,
-      "f": 1.0467435598225592,
+      "c": -0.106853,
+      "f": 1.046008,
       "name": "Sealed Mining Shaft",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "383": {
-      "c": -0.13637523669323529,
-      "f": 1.0826718668592414,
+      "c": -0.136459,
+      "f": 1.08223,
       "name": "Tomb of Renu'LeBarr",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "386": {
-      "c": -0.6135068956454293,
-      "f": 1.109017593781491,
+      "c": -0.61352,
+      "f": 1.108616,
       "name": "Pilgrims' Peril Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "387": {
-      "c": -0.791149799767636,
-      "f": 0.7118556139279019,
+      "c": -0.791096,
+      "f": 0.71141,
       "name": "Stragglers' Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "388": {
-      "c": -0.19924291456010798,
-      "f": 1.1460703983110228,
+      "c": -0.199027,
+      "f": 1.145362,
       "name": "Tomb of Ja'Nuwa",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "389": {
-      "c": -0.3864154047699771,
-      "f": 1.155195479568598,
+      "c": -0.386322,
+      "f": 1.154685,
       "name": "Canyon Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "391": {
-      "c": -0.3044326794358562,
-      "f": 1.108013650492072,
+      "c": -0.304402,
+      "f": 1.107258,
       "name": "Darkbeasts' Den",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "392": {
-      "c": -0.6378912690199628,
-      "f": 0.7201695881088707,
+      "c": -0.637777,
+      "f": 0.719536,
       "name": "Tomb of Al'Guttos",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "393": {
-      "c": -0.6424768000558566,
-      "f": 0.7697241339886749,
+      "c": -0.638954,
+      "f": 0.768953,
       "name": "Sandspire Den",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "394": {
-      "c": -0.11457509902430313,
-      "f": 1.2107277443200477,
+      "c": -0.11449,
+      "f": 1.209986,
       "name": "Sal'Battahl Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "395": {
-      "c": -0.548021880545199,
-      "f": 1.1781447031269732,
+      "c": -0.547542,
+      "f": 1.177284,
       "name": "Caliginous Depths",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "396": {
-      "c": -0.4982324964184406,
-      "f": 1.0584513629259238,
+      "c": -0.498238,
+      "f": 1.057867,
       "name": "Howling Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "406": {
       "name": "Moonglint Tower",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "407": {
       "name": "Vernworth - Southern Ruins",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "408": {
       "name": "Stormwind Cave",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "410": {
       "name": "Vernworth - Southern Ruins",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "411": {
       "name": "Depleted Ore Deposit",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "412": {
       "name": "Pilgrims' Peril Cave",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "413": {
       "name": "Vernworth - Southern Ruins",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "415": {
       "name": "Seafloor Shrine",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "416": {
-      "c": -0.8507564227606307,
-      "f": 0.7562137727664745,
+      "c": -0.84913,
+      "f": 0.747755,
       "name": "Indigent Bedlands",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "417": {
-      "c": -0.8487823169256697,
-      "f": 0.7516655135596059,
+      "c": -0.848866,
+      "f": 0.752008,
       "name": "Indigent Bedlands",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "418": {
-      "c": -0.7024027861653201,
-      "f": 0.7471763652704413,
+      "c": -0.702398,
+      "f": 0.747256,
       "name": "Trembling Hollow",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "419": {
-      "c": -0.701458648592078,
-      "f": 0.7496650686776853,
+      "c": -0.692052,
+      "f": 0.747705,
       "name": "Trembling Hollow",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "420": {
-      "c": -0.6718873800809171,
-      "f": 0.764407330596599,
+      "c": -0.672072,
+      "f": 0.764258,
       "name": "Depleted Ore Deposit",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "421": {
-      "c": -0.6720590414578702,
-      "f": 0.7575419457908921,
+      "c": -0.672017,
+      "f": 0.757417,
       "name": "Depleted Ore Deposit",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "422": {
-      "c": -0.6938338375040298,
-      "f": 0.7723496492276217,
+      "c": -0.694069,
+      "f": 0.772237,
       "name": "Derelict Mine",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "423": {
-      "c": -0.6937480068155533,
-      "f": 0.7606785762132354,
+      "c": -0.693903,
+      "f": 0.760556,
       "name": "Derelict Mine",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "424": {
-      "c": -0.7047343349405533,
-      "f": 0.7825618027365958,
-      "name": "Highland Cavern",
+      "c": -0.693922,
+      "f": 0.752751,
+      "name": "Derelict Mine",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "425": {
-      "c": -0.6870589907748137,
-      "f": 0.6566003520251248,
+      "c": -0.686984,
+      "f": 0.656549,
       "name": "Forgotten Tunnel",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "426": {
-      "c": -0.7073150332552824,
-      "f": 0.6566003520251248,
+      "c": -0.707077,
+      "f": 0.656367,
       "name": "Forgotten Tunnel",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "427": {
-      "c": -0.2400278706736292,
-      "f": 0.4511040291047587,
+      "c": -0.239924,
+      "f": 0.450811,
       "name": "Strange Corridor",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "428": {
-      "c": -0.24019953205058234,
-      "f": 0.43805881434417376,
+      "c": -0.23993,
+      "f": 0.437598,
       "name": "Strange Corridor",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "429": {
-      "c": -0.18249221297711288,
-      "f": 0.9907756990785166,
+      "c": -0.182556,
+      "f": 0.990266,
       "name": "Echoing Depths",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "430": {
-      "c": -0.21845527144879257,
-      "f": 0.9973835652838849,
-      "name": "Eremitic Sanctuary",
+      "c": -0.182198,
+      "f": 0.999736,
+      "name": "Tomb of Ku'Myage",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "449": {
-      "c": -0.7387594433559829,
-      "f": 0.590443761374642,
-      "name": "Vernworth - Southern Ruins",
+      "c": -0.771041,
+      "f": 0.187452,
+      "name": "Mountain Shrine",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "450": {
-      "c": -0.6337575088100414,
-      "f": 0.6210500325691469,
-      "name": "Vernworth - Southern Ruins",
-      "floor": "1F",
-      "src": "game"
+      "c": -0.661082,
+      "f": 0.691091,
+      "name": "Ancient Battleground",
+      "floor": "",
+      "src": "aligned",
+      "scale": 0.5
     },
     "451": {
-      "c": -0.6571689841519497,
-      "f": 0.5714392092756115,
+      "c": -0.657318,
+      "f": 0.571043,
       "name": "Ancient Battleground",
       "floor": "2F",
       "src": "aligned"
     },
     "473": {
-      "c": -0.6296686383022719,
-      "f": 0.7327306486959093,
-      "name": "Coastal Cavern",
-      "floor": "B1F",
-      "src": "game"
+      "c": -0.768629,
+      "f": 0.198253,
+      "name": "Mountain Shrine",
+      "floor": "1F",
+      "src": "aligned"
     },
     "474": {
-      "c": -0.6492380352749282,
-      "f": 0.7260369513896889,
-      "name": "Pilgrims' Peril Cave",
-      "floor": "2F",
-      "src": "game"
+      "c": -0.771125,
+      "f": 0.17637,
+      "name": "Mountain Shrine",
+      "floor": "",
+      "src": "aligned"
     },
     "501": {
-      "c": -0.5726464279449663,
-      "f": 0.5126776767221498,
+      "c": -0.575029,
+      "f": 0.363194,
       "name": "Dragonsbreath Tower",
       "floor": "",
-      "src": "game"
+      "src": "aligned",
+      "note": "unknown area"
     },
     "502": {
-      "c": -0.6023837196473897,
-      "f": 0.8097474290532859,
+      "c": -0.599083,
+      "f": 0.778701,
       "name": "Dragonsbreath Tower",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "503": {
-      "c": -0.6029845344667256,
-      "f": 0.8119788823711733,
+      "c": -0.599024,
+      "f": 0.758928,
       "name": "Dragonsbreath Tower",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "504": {
-      "c": -0.6015254127626241,
-      "f": 0.8110348060882008,
+      "c": -0.599053,
+      "f": 0.747559,
       "name": "Dragonsbreath Tower",
       "floor": "3F",
-      "src": "game"
+      "src": "aligned"
     },
     "505": {
-      "c": -0.5991221534852803,
-      "f": 0.7367097200261759,
+      "c": -0.598944,
+      "f": 0.736186,
       "name": "Dragonsbreath Tower",
       "floor": "4F",
-      "src": "game"
+      "src": "aligned"
     },
     "506": {
-      "c": -0.5997229683046162,
-      "f": 0.8070868488068382,
+      "c": -0.599065,
+      "f": 0.805793,
       "name": "Dragonsbreath Tower",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "507": {
-      "c": -0.5992938148622334,
-      "f": 0.7250373285627355,
+      "c": -0.598929,
+      "f": 0.724437,
       "name": "Dragonsbreath Tower",
       "floor": "5F",
-      "src": "game"
+      "src": "aligned"
     },
     "508": {
-      "c": -0.7268709676705332,
-      "f": 0.5782893159758814,
+      "c": -0.726906,
+      "f": 0.578461,
       "name": "Nameless Village Depths",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "509": {
-      "c": -0.6523873001147651,
-      "f": 0.5371780738355361,
+      "c": -0.652507,
+      "f": 0.536929,
       "name": "Digger's Ruins",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "512": {
       "subregionId": 2492,
       "floor": "B1F",
       "name": "Guerco Cavern",
-      "c": -0.4956044641893372,
-      "f": 0.3044656791484962,
+      "c": -0.531346,
+      "f": 0.281285,
       "auto": false,
-      "src": "tokens",
+      "src": "aligned",
       "points": [
         {
           "gameX": -930.7362,
@@ -602,149 +631,149 @@
       ]
     },
     "513": {
-      "c": -0.5014360747710935,
-      "f": 0.30605768384291987,
+      "c": -0.501553,
+      "f": 0.305775,
       "name": "Guerco Cavern",
       "floor": "1F",
       "src": "aligned"
     },
     "515": {
-      "c": -0.3575289759148402,
-      "f": 0.6497072254508058,
+      "c": -0.357504,
+      "f": 0.649362,
       "name": "Stormwind Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "520": {
-      "c": -0.6487824111987495,
-      "f": 1.1253229908317963,
-      "name": "Twilight Cave",
+      "c": -0.661079,
+      "f": 0.537512,
+      "name": "Digger's Ruins",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "521": {
-      "c": -0.6836296707202338,
-      "f": 0.7299447971412674,
-      "name": "Sandspire Den",
+      "c": -0.644199,
+      "f": 0.532082,
+      "name": "Digger's Ruins",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "527": {
-      "c": -0.2829566607742075,
-      "f": 1.1509819549050653,
+      "c": -0.303086,
+      "f": 1.169346,
       "name": "Mountain Base Cave",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "528": {
-      "c": -0.2992644915847544,
-      "f": 1.1686607133611449,
+      "c": -0.299296,
+      "f": 1.168472,
       "name": "Mountain Base Cave",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "529": {
-      "c": -0.3065601001052622,
-      "f": 1.1683174373496488,
+      "c": -0.306455,
+      "f": 1.168353,
       "name": "Mountain Base Cave",
       "floor": "3F",
-      "src": "game"
+      "src": "aligned"
     },
     "543": {
-      "c": -0.47225879621878225,
-      "f": 0.561116725169365,
+      "c": -0.472312,
+      "f": 0.560718,
       "name": "Headwater Cavern",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "544": {
-      "c": -0.6798144233320068,
-      "f": 0.8891499507684999,
+      "c": -0.679888,
+      "f": 0.888872,
       "name": "Putrid Cave",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "545": {
-      "c": -0.6825640290948595,
-      "f": 0.7368907303497682,
+      "c": -0.682454,
+      "f": 0.733811,
       "name": "Ancestral Chamber",
       "floor": "",
       "src": "aligned",
-      "scale": 0.6536674387014378
+      "scale": 0.6615114271142198
     },
     "547": {
-      "c": -1.1377811368952209,
-      "f": 0.5192407843097202,
-      "name": "Vernworth - Southern Ruins",
+      "c": -1.133947,
+      "f": 0.12546,
+      "name": "Cavern of the Forsaken",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "548": {
-      "c": -1.16876601543526,
-      "f": 0.1014512324461523,
-      "name": "Mountain Shrine",
+      "c": -1.142856,
+      "f": 0.123005,
+      "name": "Cavern of the Forsaken",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "549": {
-      "c": -0.7159030653630298,
-      "f": 0.9993133204575243,
+      "c": -0.71591,
+      "f": 0.998985,
       "name": "Drabnir's Grotto",
       "floor": "B2F",
       "src": "aligned"
     },
     "550": {
-      "c": -0.6863949850610533,
-      "f": 0.5712852291995808,
+      "c": -0.686501,
+      "f": 0.57093,
       "name": "Worldsend Cavern",
       "floor": "B1F",
       "src": "aligned"
     },
     "551": {
-      "c": -0.6385612252534116,
-      "f": 0.6903276017701383,
+      "c": -0.638589,
+      "f": 0.689972,
       "name": "Coral Snakes' Hideout",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "552": {
-      "c": -0.6103229287446226,
-      "f": 0.6910141923088589,
+      "c": -0.610601,
+      "f": 0.690229,
       "name": "Coral Snakes' Hideout",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "554": {
-      "c": -1.0048502490093887,
-      "f": 0.760909344682927,
+      "c": -1.004784,
+      "f": 0.761003,
       "name": "Vernworth - Southern Ruins",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "557": {
-      "c": -0.7139950653630298,
-      "f": 0.9861843204575244,
+      "c": -0.714032,
+      "f": 0.985716,
       "name": "Drabnir's Grotto",
       "floor": "B1F",
       "src": "aligned"
     },
     "558": {
-      "c": -0.7123010653630298,
-      "f": 0.9574173204575244,
+      "c": -0.712278,
+      "f": 0.957119,
       "name": "Drabnir's Grotto",
       "floor": "1F",
       "src": "aligned"
     },
     "559": {
-      "c": -0.7122570653630298,
-      "f": 0.9669873204575243,
+      "c": -0.712356,
+      "f": 0.966697,
       "name": "Drabnir's Grotto",
       "floor": "2F",
       "src": "aligned"
     },
     "566": {
-      "c": -0.6840569850610534,
-      "f": 0.5659752291995809,
+      "c": -0.684193,
+      "f": 0.56563,
       "name": "Worldsend Cavern",
       "floor": "1F",
       "src": "aligned"
@@ -752,140 +781,143 @@
     "581": {
       "name": "Nameless Village Depths",
       "floor": "",
-      "src": "game"
+      "src": "game",
+      "c": null,
+      "f": null
     },
     "593": {
-      "c": -0.6878525576001694,
-      "f": 0.7089911250076335,
+      "c": -0.687798,
+      "f": 0.709335,
       "name": "Moonglint Tower",
       "floor": "1F",
       "src": "aligned"
     },
     "594": {
-      "c": -0.6204301639053994,
-      "f": 0.6969288585940027,
+      "c": -0.665582,
+      "f": 0.70933,
       "name": "Moonglint Tower",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "595": {
-      "c": -0.6221467776749307,
-      "f": 0.6984737632262402,
+      "c": -0.64574,
+      "f": 0.709362,
       "name": "Moonglint Tower",
       "floor": "3F",
-      "src": "game"
+      "src": "aligned"
     },
     "596": {
-      "c": -0.6251508517716103,
-      "f": 0.7086872910981603,
+      "c": -0.625164,
+      "f": 0.709367,
       "name": "Moonglint Tower",
       "floor": "4F",
-      "src": "game"
+      "src": "aligned"
     },
     "603": {
-      "c": -0.376396626040351,
-      "f": 0.6291805210309103,
+      "c": -0.37647,
+      "f": 0.629142,
       "name": "Seafloor Shrine",
       "floor": "B1F",
       "src": "aligned"
     },
     "604": {
-      "c": -0.37839162604035104,
-      "f": 0.6419755210309103,
+      "c": -0.378405,
+      "f": 0.641957,
       "name": "Seafloor Shrine",
       "floor": "1F",
       "src": "aligned"
     },
     "627": {
-      "c": -0.5216237648061512,
-      "f": 0.6168681212637608,
+      "c": -0.52153,
+      "f": 0.616544,
       "name": "The Gracious Hand's Vaults",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "628": {
-      "c": -0.5213877304128407,
-      "f": 0.6096161311586641,
+      "c": -0.521535,
+      "f": 0.609572,
       "name": "The Gracious Hand's Vaults",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "629": {
-      "c": -0.5272671325734852,
-      "f": 0.6092942969825459,
+      "c": -0.527283,
+      "f": 0.609455,
       "name": "The Gracious Hand's Vaults",
       "floor": "2F",
-      "src": "game"
+      "src": "aligned"
     },
     "632": {
-      "c": -0.9007838262614296,
-      "f": 0.41953226190395293,
+      "c": -0.900865,
+      "f": 0.419475,
       "name": "Trevo Mine",
       "floor": "B1F",
       "src": "aligned"
     },
     "633": {
-      "c": -0.9013518262614296,
-      "f": 0.4206052619039529,
+      "c": -0.901553,
+      "f": 0.420468,
       "name": "Trevo Mine",
       "floor": "1F",
       "src": "aligned"
     },
     "634": {
-      "c": -0.8891568262614296,
-      "f": 0.41788826190395295,
+      "c": -0.889248,
+      "f": 0.417961,
       "name": "Trevo Mine",
       "floor": "2F",
       "src": "aligned"
     },
     "635": {
-      "c": -0.5817872350599822,
-      "f": 0.8690956420056981,
+      "c": -0.581516,
+      "f": 0.869392,
       "name": "Seafloor Shrine",
       "floor": "",
-      "src": "game"
+      "src": "aligned",
+      "note": "unnamed area"
     },
     "638": {
-      "c": -0.2959660505932419,
-      "f": 0.8381119159573034,
+      "c": -0.296051,
+      "f": 0.837773,
       "name": "Windworn Gully",
       "floor": "",
-      "src": "game"
+      "src": "aligned"
     },
     "683": {
-      "c": -0.3029127688029642,
-      "f": 1.0587229909797888,
+      "c": -0.302759,
+      "f": 1.058147,
       "name": "Tomb of Am'Ranna",
       "floor": "B3F",
-      "src": "game"
+      "src": "aligned"
     },
     "684": {
-      "c": -0.29802041955980013,
-      "f": 1.0555477412693666,
+      "c": -0.298023,
+      "f": 1.054897,
       "name": "Tomb of Am'Ranna",
       "floor": "B2F",
-      "src": "game"
+      "src": "aligned"
     },
     "685": {
-      "c": -0.292355594120347,
-      "f": 1.051171040687038,
+      "c": -0.292283,
+      "f": 1.050617,
       "name": "Tomb of Am'Ranna",
       "floor": "B1F",
-      "src": "game"
+      "src": "aligned"
     },
     "686": {
-      "c": -0.28720575281175326,
-      "f": 1.0470517877691325,
+      "c": -0.287187,
+      "f": 1.046531,
       "name": "Tomb of Am'Ranna",
       "floor": "1F",
-      "src": "game"
+      "src": "aligned"
     },
     "2456|": {
       "subregionId": 2456,
       "floor": "",
       "name": "Vernworth Castle",
-      "c": -0.47328155351694057,
-      "f": 0.6951583359401873,
+      "c": -0.47332964381541537,
+      "f": 0.69529440587019,
       "auto": true,
       "points": [
         {
@@ -901,8 +933,8 @@
       "subregionId": 2531,
       "floor": "",
       "name": "Rock Wall Berme",
-      "c": -0.6843065924250503,
-      "f": 0.815091561709225,
+      "c": -0.684371762453438,
+      "f": 0.8147504143833234,
       "auto": false,
       "src": "tokens",
       "points": [
@@ -919,8 +951,8 @@
       "subregionId": 2455,
       "floor": "2F",
       "name": "Waterfall Cave",
-      "c": -0.5833846447506432,
-      "f": 0.5037558563274667,
+      "c": -0.5835091329005342,
+      "f": 0.5040064388177508,
       "auto": false,
       "src": "tokens",
       "points": [
@@ -937,8 +969,8 @@
       "subregionId": 2455,
       "floor": "1F",
       "name": "Waterfall Cave",
-      "c": -0.5865150490705208,
-      "f": 0.47329008349852947,
+      "c": -0.5866426602780017,
+      "f": 0.473512533896541,
       "auto": false,
       "src": "tokens",
       "points": [
@@ -955,8 +987,8 @@
       "subregionId": 2459,
       "floor": "1F",
       "name": "The Gracious Hand's Vaults",
-      "c": -0.521508954679969,
-      "f": 0.6092671866935216,
+      "c": -0.5215565711654951,
+      "f": 0.6094309736435635,
       "auto": true,
       "dist": 0.6110265306149695,
       "points": [
@@ -972,8 +1004,8 @@
       "subregionId": 2459,
       "floor": "2F",
       "name": "The Gracious Hand's Vaults",
-      "c": -0.5358342490935362,
-      "f": 0.6048227679336476,
+      "c": -0.5358827850119809,
+      "f": 0.6049848685381816,
       "auto": true,
       "points": [
         {
@@ -988,8 +1020,8 @@
       "subregionId": 2447,
       "floor": "1F",
       "name": "Forgotten Tunnel",
-      "c": -0.7082156137483075,
-      "f": 0.6558639480577502,
+      "c": -0.7083157133052637,
+      "f": 0.655707824493519,
       "auto": true,
       "dist": 1.8913148866699652,
       "points": [
@@ -1005,8 +1037,8 @@
       "subregionId": 2488,
       "floor": "1F",
       "name": "Forbidden Magick Research Lab",
-      "c": -0.7660916637814927,
-      "f": 0.7561745058444208,
+      "c": -0.7660702729004141,
+      "f": 0.7558632112821779,
       "auto": true,
       "dist": 18.994395017708136,
       "points": [
