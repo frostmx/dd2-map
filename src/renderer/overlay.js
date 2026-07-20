@@ -54,8 +54,18 @@ webview.addEventListener('dom-ready', () => {
   probeInFlight = false;
   probeAttempts = 0;
   lastPushedZoom = null; // the fresh guest has no target; force a re-push
+  installZoomClamp();
   installFoundSync();
 });
+
+// Cap the raster sources at the deepest zoom mapgenie actually HAS tiles for: their
+// style claims z17, the tile server 403s it, and the map goes blank at max zoom. See
+// mapAgent's buildClampZoom. Retries because the style isn't up at dom-ready.
+function installZoomClamp(attempt = 0) {
+  runInWebview(window.DD2MapAgent.buildClampZoom()).then((ok) => {
+    if (!ok && attempt < 20) setTimeout(() => installZoomClamp(attempt + 1), 500);
+  });
+}
 
 // Mirrors found-marks between the overlay and the control window: they're two
 // separate mapgenie SPA instances and neither sees the other's marks until a

@@ -1075,5 +1075,64 @@
 `;
   }
 
-  window.DD2MapAgent = { buildInstallMarker, buildFoundSync, buildExtractAreas };
+  // --- Tile-zoom clamp ---------------------------------------------------------
+  // mapgenie's own style LIES about how deep its tiles go. Both raster sources
+  // ("World" and "Unmoored World") declare `maxzoom: 17` with `tileSize: 256`,
+  // but tiles.mapgenie.io answers **403** for every z17 tile:
+  //
+  //   (403) .../dragons-dogma-2/world/world-v1/17/65255/65311.jpg
+  //
+  // z16 is the deepest that actually exists. The camera is NOT the problem — the
+  // style already caps it at 16 (the probe reports "range 7–16"). The catch is that
+  // at tileSize 256 MapLibre asks for tiles one level BELOW the camera zoom
+  // (covering zoom = round(zoom + log2(512/tileSize))), so simply sitting at the
+  // permitted max zoom of 16 requests z17 and the map goes blank in a wall of 403s.
+  //
+  // The fix belongs on the source, not the camera: tell it maxzoom 16 and MapLibre
+  // overzooms the z16 tiles it already has — the full 7–16 camera range keeps
+  // working, it just renders upscaled at the very bottom instead of blank. Capping
+  // the camera instead (setMaxZoom(15)) would have cost a whole zoom level of reach
+  // for no reason.
+  //
+  // Must go through `map.getSource(id)` — the live source object SourceCache reads
+  // `maxzoom` off on every update. `map.getStyle()` hands back a serialized COPY,
+  // and mutating that changes nothing.
+  //
+  // Not a taste knob, so no entry in overlay.json: it's a fact about mapgenie's
+  // tile server. If they ever publish z17 for real, raise it.
+  const MAX_TILE_ZOOM = 16;
+
+  function buildClampZoom(maxZoom) {
+    const max = typeof maxZoom === 'number' ? maxZoom : MAX_TILE_ZOOM;
+    return `
+  (function() {
+    // false while the map object / style isn't up yet (dom-ready fires well before
+    // either); the caller retries.
+    if (!window.map || typeof window.map.getSource !== 'function') return false;
+    var style;
+    try { style = window.map.getStyle(); } catch (e) { return false; }
+    if (!style || !style.sources) return false;
+    var ids = Object.keys(style.sources);
+    if (!ids.length) return false;
+
+    var clamped = 0;
+    ids.forEach(function(id) {
+      var src = window.map.getSource(id);
+      if (!src || src.type !== 'raster') return;
+      if (typeof src.maxzoom === 'number' && src.maxzoom > ${max}) {
+        src.maxzoom = ${max};
+        clamped++;
+      }
+    });
+    // SourceCache recomputes its covering tiles on the next update, so a repaint is
+    // all it takes for the new ceiling to bite.
+    if (clamped) window.map.triggerRepaint();
+    return true;
+  })()
+`;
+  }
+
+  window.DD2MapAgent = {
+    buildInstallMarker, buildFoundSync, buildExtractAreas, buildClampZoom, MAX_TILE_ZOOM,
+  };
 })();

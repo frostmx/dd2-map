@@ -36,9 +36,19 @@ let markerInstalled = false;
 webview.addEventListener('dom-ready', () => {
   webviewReady = true;
   markerInstalled = false;
+  installZoomClamp();
   installFoundSync();
   extractAreas();
 });
+
+// Cap the raster sources at the deepest zoom mapgenie actually HAS tiles for: their
+// style claims z17, the tile server 403s it, and the map goes blank at max zoom. See
+// mapAgent's buildClampZoom. Retries because the style isn't up at dom-ready.
+function installZoomClamp(attempt = 0) {
+  runInWebview(window.DD2MapAgent.buildClampZoom()).then((ok) => {
+    if (!ok && attempt < 20) setTimeout(() => installZoomClamp(attempt + 1), 500);
+  });
+}
 
 // --- Dungeon areas ------------------------------------------------------------
 // mapgenie draws each dungeon as an INSET off to the side of the world map, in the

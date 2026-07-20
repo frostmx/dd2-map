@@ -1828,3 +1828,49 @@ chests out of the single `arCollectibles` toggle if a treasure-dense area ever f
    the Lua after each to get the new base fast); validate survivors with
    `tools/testChains.js`.
 4. Wire into `index.js` via `resolvePointerChain`.
+
+## mapgenie's style claims z17 tiles that don't exist — 403s at max zoom (2026-07-20)
+
+Symptom: at the deepest zoom the map went blank, and both webview consoles filled with
+
+```
+Error: AJAXError: (403): https://tiles.mapgenie.io/games/dragons-dogma-2/world/world-v1/17/65255/65311.jpg
+```
+
+The obvious reading — "our zoom driving is walking past the map's limit" — is **wrong**,
+and chasing it wastes a pass. The camera was never out of range: the startup probe reports
+`range 7–16`, i.e. mapgenie's own style already caps `map.getMaxZoom()` at 16, and there is
+no code path that can exceed it.
+
+The real cause is one level lower. Both raster sources declare a maxzoom the server does not
+honour:
+
+```
+World          type=raster tileSize=256 minzoom=7 maxzoom=17
+Unmoored World type=raster tileSize=256 minzoom=8 maxzoom=17
+```
+
+z17 is a **lie** — every z17 tile 403s; z16 is the deepest that exists (which the inset
+resolver already knew, see "z16 is not a preference"). And because `tileSize` is **256**, not
+the MapLibre default 512, the covering tile zoom is one level *above* the camera zoom
+(`round(zoom + log2(512/tileSize))`). So merely sitting at the permitted maximum camera zoom
+of 16 asks for **z17** tiles. The legal top of the camera range was unusable.
+
+Fix (`mapAgent.buildClampZoom`, injected on every `dom-ready` in both windows): clamp each
+raster source's `maxzoom` to 16. MapLibre then **overzooms** the z16 tiles it already has, so
+the whole 7–16 camera range keeps working — the bottom of it just renders upscaled instead of
+blank. Verified behaviourally: 403 count went 25+ → **0** across a 30s run, probe still
+`range 7–16`.
+
+Two traps in doing it:
+
+- It must go through **`map.getSource(id)`**. `map.getStyle()` returns a *serialized copy* of
+  the style; mutating `getStyle().sources[id].maxzoom` changes nothing. `SourceCache` reads
+  `maxzoom` off the live source object on every update, which is why a plain assignment plus
+  a `triggerRepaint()` is enough — no source re-add, no style reload.
+- Do **not** "fix" this by capping the camera (`setMaxZoom(15)`). It also silences the 403s,
+  but at the cost of a whole zoom level of reach, and it treats a data bug as a camera bug.
+
+Not a knob in `overlay.json`: it is a fact about mapgenie's tile server, not something that
+can be judged while playing. `MAX_TILE_ZOOM` is a constant in `mapAgent.js` — raise it if
+they ever publish z17 for real.
