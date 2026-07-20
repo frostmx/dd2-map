@@ -82,9 +82,16 @@ drift apart.
 
 `game (x, y)` → `mapgenie (lng, lat)` is a **2D affine**. There are two of them:
 
-- **World affine** — `config/calibration.json`. Solved by clicking 3+ landmarks in
-  the control window; Refine appends a point and re-solves. Written by the
-  **renderer**.
+- **World affine** — `config/calibration.json`. Now a **pure similarity transform**:
+  `a = |e| = 0.000085811433`, `b = d = 0` — uniform scale, no rotation, no shear. Re-solved
+  2026-07-20 by dragging the whole baked overworld map onto mapgenie's tiles
+  (`.map/worldMapAligner.html`), replacing an older 4-point click fit that was slightly
+  rotated and slightly anisotropic. Landing on exact conformality by hand is the evidence
+  it's right: both sides render the same square world axis-aligned, so anything else was
+  fit error. **It has no `points` array** — nothing reads one, and keeping the old
+  correspondences would invite a future "re-solve from points" straight back to the bad
+  values. Conformality also matters downstream: `aheadPoint` (the facing arrow) only keeps
+  heading angles undistorted while the transform stays conformal.
 - **Dungeon insets** — `config/dungeons.json`: `{ insetLinear, areas: { <key>: {c,f,scale?} } }`.
   mapgenie draws each dungeon as an inset panel off to the side of the world map, in the same
   lng/lat plane, while DD2 keeps reporting ordinary world coords inside caves. **Almost** every

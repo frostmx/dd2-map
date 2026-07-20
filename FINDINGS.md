@@ -371,6 +371,12 @@ layer. Two things that cost debugging:
   below). Anchoring on the box center put the marker where the player walks and split the
   residual drift to the edges.
 
+  **Global 2.0 rescale — DONE (2026-07-19), and the follow-up 1.9225 revert CANCELLED
+  (2026-07-20).** The 2.0 value below stands, but read the "115 hand-alignments" note further
+  down before touching the shared scale again: a plan to revert it to 1.9225 was cancelled
+  when 115 dungeons aligned by hand all landed at scale **1.000**. The `1.048` that motivated
+  2.0 was also not what it looked like — see the art-scale-slider trap in that same note.
+
   **Global 2.0 rescale — DONE (2026-07-19).** 1.9225 × 1.048 ≈ 2.0, the clean value mapgenie
   actually draws insets at. A center-preserving rescale of the shared linear (`a,b,d,e ×=
   2.0/1.9225`) with each area's `c,f` re-derived so its **box centre maps to the identical
@@ -428,6 +434,72 @@ layer. Two things that cost debugging:
   `c,f` are no longer read. The rule that killed the bug: **one writer per transform, and for
   dungeons that writer is us, not the app.** insetLinear in `dungeons.json` is absolute, so it does
   NOT track the world affine — re-calibrating the overworld no longer re-derives it.
+
+  **115 hand-alignments settle the shared scale — and kill three plausible theories
+  (2026-07-20).** After the clobber fix, 115 dungeons were aligned by hand against mapgenie in
+  the rebuilt `.map/aligner.html`. Result: **every one landed at scale `1.000`** (the existing
+  shared linear) except Ancestral (0.6615) and Ancient Battleground (0.5). Positions moved by a
+  mean of **−0.00% / −0.30% of a box** (sd ~0.6%, max 2.5%) with **no correlation to map
+  position** (r = 0.06 / 0.20) — i.e. hand-precision scatter centred on zero, not a systematic
+  error. Consequences:
+
+  - **The planned global revert to 1.9225 was cancelled.** One earlier single-dungeon test
+    (`setScale 627 1.9225`, "fits again — almost, still slightly offsetted") had suggested it;
+    115 independent fits outvote it. The scale was right all along, and the earlier "dungeons
+    look wrong" symptom was the `mergeLocalAreas` clobber above, not the scale.
+  - **The "aligned wanted 2.0 / game wanted 1.9225" split never existed.** It came from
+    misreading the old aligner: `currentCF()` exports `c,f` against the **shared** linear,
+    centre-anchored, and its art-scale slider is **purely visual** (its own comment says so).
+    So the `1.048` dialled during the 16-dungeon pass was an observation about our *art extent*
+    being oversized, never a transform factor. **If a tool's control doesn't feed its export,
+    say so in the export** — that one silent decoupling produced a false scale story that
+    survived two sessions.
+  - **Ancient Battleground (450) sits at exactly 0.5× the inset scale = 1.0× world scale**,
+    which suggests it isn't drawn as an inset at all.
+
+  **Identity errors are common, and match score does not find them (2026-07-20).** 13 dungeons
+  were pointing at the wrong mapgenie subregion. `473` ("Coastal Cavern B1F", really Mountain
+  Shrine) was found by its tell — score 0.3507, barely over the old 0.30 trust gate, claiming a
+  subregion whose real holder (349) sits ~2200 units away. But **`449` scored 0.7811 and was
+  equally wrong** (also Mountain Shrine). So score is a triage hint, never a verdict; only eyes
+  on the art settle it. Two structural signals do help and are now surfaced as flags in the
+  aligner: a **low score on an entry never hand-verified**, and a **duplicate title+floor where
+  this entry scores lower than another claiming the same label**. Corrections must update
+  `subregionId` as well as the title — the pointer path feeds it to the overlay's POI filter,
+  so a rename alone would leave the wrong floor's icons showing.
+
+  **mapgenie's inset panels are not 1:1 with LocalAreas.** Mountain Shrine (sub 2489) is drawn
+  as a **single 1F panel** that the game splits across **three** LocalAreas (449, 473, 474).
+  Expect duplicate labels to be legitimate sometimes; the game's subdivision is finer than
+  mapgenie's.
+
+### The alignment tooling (`.map/*.html`, 2026-07-20)
+
+Three generators, all writing self-contained pages that fetch mapgenie tiles live. Run
+`node .map/gen<X>.js` to rebuild; editing the generator alone does nothing until you re-run it.
+
+- **`genWorldMapAligner.js` → `worldMapAligner.html`** — drags our whole baked overworld map
+  (`world.png`, game box ±4096) onto mapgenie's tiles to solve the **world affine**. This is
+  what produced the conformal calibration. Aligning *cities individually* was tried first and
+  abandoned: each city could be made to fit, but no single transform satisfied all of them at
+  once, which is exactly what a one-piece overlay makes unambiguous.
+- **`genDungeonAligner.js` → `aligner.html`** — per-dungeon alignment for all 113 dungeons with
+  baked art. Exports the **full** transform (`a b c d e f` + rotation), not just `c,f` against a
+  shared linear — that assumption is what hid the scale story. Carries ✓/✗/? verdicts plus a
+  free-text note per tile (same pattern as `edgeGallery.js`) so identity errors can be reported
+  in the same paste as the transforms, and flags suspect tiles (see above).
+- Art is referenced by **`file://`**, not base64: embedding all 127 PNGs made a 12.5 MB page
+  versus 43 KB. Requires opening the page from the local filesystem.
+
+Two things learned the hard way in this tooling:
+
+- **mapgenie's world-v1 tiles stop at z16** (z17+ is HTTP 403, verified at two locations). Zoom
+  must therefore be an integer tile level clamped to ≤16 **plus** a fractional CSS scale;
+  otherwise zooming past the fixed level just upscales blurry tiles while sharper ones exist.
+- **Overworld areas must be excluded from the dungeon aligner.** Towns/cities (`overworld:true`)
+  ride the *world* affine, not `insetLinear`, so drawing them there puts them at ~2× scale in
+  empty space with no art beneath — which reads as "the tool is broken" but is correct
+  behaviour applied to the wrong set.
 
 ### Found POIs are a paint expression, not a layer (and not filterable)
 mapgenie has no separate layer for locations you've marked found — it fades them
