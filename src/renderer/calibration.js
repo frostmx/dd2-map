@@ -54,15 +54,14 @@
   // Which transform applies right now: the overworld affine, or the inset one for
   // the dungeon floor you're standing in.
   //
-  // Every inset is drawn at the same scale and rotation, so they all share one 2x2
-  // linear part (`insetLinear`) and differ only by translation. That's why a dungeon
-  // needs a single correspondence rather than three — and why walking through a
-  // doorway, which hands us one for free, is enough to calibrate it.
+  // Almost every inset shares one 2x2 linear part (`insetLinear`) and differs only by
+  // translation; a few carry an optional per-area `scale`. Those transforms are
+  // AUTHORED in config/dungeons.json (by the `.map` tooling and by hand) — the app
+  // only reads them; nothing calibrates a dungeon at runtime any more.
   //
-  // Returns null for an area we can't place (no inset scale seeded yet, or a floor
-  // reached by falling rather than through a portal). Callers must treat that as
-  // "don't move the marker" rather than falling back to the overworld affine, which
-  // would confidently draw you in the wrong place.
+  // Returns null for an area with no authored transform in the table. Callers must
+  // treat that as "don't move the marker" rather than falling back to the overworld
+  // affine, which would confidently draw you in the wrong place.
   function forArea(worldCal, areas, areaKey) {
     if (!areaKey) return worldCal;
     if (!areas || !areas.insetLinear) return null;

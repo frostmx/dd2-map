@@ -138,9 +138,9 @@ function createTracker() {
   let dismissed = false;
 
   // The insideFlag `current` was last derived from. Tracked separately from `current`
-  // itself so a manual override (Insert / PageUp / PageDown) sticks: it isn't
-  // overwritten every tick just because the raw flag is unchanged from the value that
-  // produced it. Treated as a boolean — 1 and 2 both mean inside.
+  // itself so a manual override (Insert) sticks: it isn't overwritten every tick just
+  // because the raw flag is unchanged from the value that produced it. Treated as a
+  // boolean — 1 and 2 both mean inside.
   let syncedInside = null;
 
   // Why the area last changed. Surfaced so the log can say WHY, not just what.
