@@ -208,7 +208,7 @@
       "staticOffset": "0x0FA62C94",
       "relativeToInsideFlag": -24,
       "type": "4 Bytes (int32 / hash)",
-      "note": "NOT USABLE FOR FLOORS — dead end, recorded so it is not retried. It is an id for a streaming CELL, not a room and not a floor: the same hash (1bc90b46, ae32b49d) appears at h=-13.7 AND h=-5.2 in The Gracious Hand's Vaults, and two of them flicker back and forth three times a second while you stand still on a boundary. It IS deterministic across sessions (walking a cave one way and back gives the identical hashes in reverse), which is what made it look usable — it was tried as a learned roomHash->floor key and it fought the player, flipping the floor in stairwells until every room was marked ambiguous. Floors come from HEIGHT instead (areas.floorHeights); see FINDINGS. Still read and logged by tools/zoneLog.js.",
+      "note": "NOT USABLE FOR FLOORS — dead end, recorded so it is not retried. It is an id for a streaming CELL, not a room and not a floor: the same hash (1bc90b46, ae32b49d) appears at h=-13.7 AND h=-5.2 in The Gracious Hand's Vaults, and two of them flicker back and forth three times a second while you stand still on a boundary. It IS deterministic across sessions (walking a cave one way and back gives the identical hashes in reverse), which is what made it look usable — it was tried as a learned roomHash->floor key and it fought the player, flipping the floor in stairwells until every room was marked ambiguous. Floors come from the LocalArea pointer instead (src/main/localAreaReader.js), whose id is unique per (area, floor); the older HEIGHT-learning path was also retired. See FINDINGS. Still read and logged by tools/zoneLog.js.",
       "usedFor": "diagnostics only (zoneLog)"
     },
     "unknownFloat12": {
@@ -272,6 +272,6 @@
     }
   },
   "floorHeights": {
-    "note": "Floors are told apart by HEIGHT, learned per dungeon and stored in config/areas.json under floorHeights. Nothing in memory gives the floor: insideFlag and zoneIndex are constant across a dungeon's floors, and roomHash spans them. Measured floor gaps: 5.8u (The Gracious Hand's Vaults) to 16.6u (Forgotten Tunnel), with up to 4u of wander within one floor — so no fixed height-CHANGE threshold works, which is why it is learned as an absolute per dungeon."
+    "note": "RETIRED. Floors were once told apart by HEIGHT, learned per dungeon and stored in config/areas.json under floorHeights — but the height fed to it was LOCAL (rebased per streaming cell), so a floor could read '100u off itself' across a cell boundary. Replaced by the LocalArea pointer (src/main/localAreaReader.js): its id is unique per (area, floor) and immune to falls/lifts/teleports, so nothing height-based is needed. Neither `floorHeights` nor its PageUp/PageDown teach-keys exist in the code any more. Kept as a record of why the height path was a dead end. Measured floor gaps at the time: 5.8u (The Gracious Hand's Vaults) to 16.6u (Forgotten Tunnel), with up to 4u of wander within one floor."
   }
 }

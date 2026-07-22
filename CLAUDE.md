@@ -65,13 +65,15 @@ non-obvious constraints (see "found-sync" below).
 
 Neither renderer manipulates the map directly. `renderer/mapAgent.js` builds
 **strings of JS that are injected into the mapgenie page** via
-`webview.executeJavaScript`, and exports three builders:
+`webview.executeJavaScript`, and exports five builders:
 
 | Builder | Installs |
 |---|---|
 | `buildInstallMarker` | the player marker, the 60 fps locked-centre follow loop, zoom driving, icons-only mode, hide-found, the startup probe |
 | `buildFoundSync` | the Redux `dispatch` patch that mirrors found-marks to the other window |
 | `buildExtractAreas` | pulls mapgenie's region/portal graph out of its Redux store |
+| `buildOfflineMarker` | the marker/follow loop for the offline (baked-tile) map, when the offline cache is serving |
+| `buildClampZoom` | clamps Mapbox's raster sources to the z16 tiles that actually exist (mapgenie's z17 tiles 403) |
 
 Injection as a *string* is not a style choice: **a `<webview>` preload does not share
 `window.map` with the page** in this Electron version, even with
@@ -218,4 +220,10 @@ matter can only be judged while actually playing.
 `config/mapgenie-areas.json` is a re-derived cache and is gitignored. `config/dungeons.json`
 (authored dungeon transforms, **app read-only**) and `config/areas.json` (named buildings, the
 one area file the app writes) are both tracked — they hold work that cost playtime.
+
+`config/cache.json` (gitignored, per-machine) records which map source you last picked —
+`auto` / `online` / `offline`. It backs the **offline map cache**: `src/main/tileCache.js`
++ `httpMirror.js` + `assetCapture.js` bake mapgenie's tiles and assets to disk and serve
+them from a local mirror so the map works with mapgenie unreachable, and `buildOfflineMarker`
+in `mapAgent.js` drives the marker over those baked tiles. See `findings/offline-cache.md`.
 

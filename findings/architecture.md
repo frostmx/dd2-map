@@ -28,16 +28,17 @@ dd2-map/
     gimmickReader.js          # live gimmick state near the player
     timerResolution.js        # raises the Windows timer resolution for the poll loop
   src/renderer/
-    index.html/.js    # control window: mapgenie <webview>, calibration, overlay settings
+    index.html/.js    # control window: mapgenie <webview>, overlay settings (no calibration UI)
     overlay.html/.js  # overlay: map + player marker only, no UI
     mapAgent.js       # the scripts injected into the mapgenie guest — shared by both:
                       #   buildInstallMarker (marker, follow, zoom, icons-only,
-                      #   hide-found), buildFoundSync, buildExtractAreas
+                      #   hide-found), buildFoundSync, buildOfflineMarker,
+                      #   buildExtractAreas, buildClampZoom
     calibration.js    # the affines (world + per-area), shared by both
     preload.js / overlayPreload.js   # contextBridges
   config/
     dd2.offsets.json  # THE memory findings (pointer chains, offsets, backups)
-    calibration.json  # solved world->map affine  (written by the RENDERER)
+    calibration.json  # world->map affine — AUTHORED by hand (.map/worldMapAligner.html); app read-only
     dungeons.json     # THE dungeon inset transforms — AUTHORED; the app only reads it
     areas.json        # named buildings/places only (written by MAIN)
     localAreas.json   # LocalArea metadata (box/score/title); its c,f are NOT consulted

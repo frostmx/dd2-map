@@ -14,8 +14,10 @@ npm install
 npm start
 ```
 
-Two windows open: the **control window** (the map plus the calibration panel —
-this is where you calibrate and browse) and the **overlay**, which starts hidden.
+Two windows open: the **control window** (the map plus a settings panel — this is
+where you browse the map and tune the overlay) and the **overlay**, which starts
+hidden. There is no calibration step: the map ships already aligned to the game's
+world coordinates.
 
 They're two separate mapgenie instances, but **found-marks sync between them live**
 — mark a POI in either and the other updates immediately, no reload.
@@ -35,7 +37,6 @@ that's a Windows limitation, not something the app can work around.
 | `F9` | Base map on / off — off leaves just the POI icons floating over the world |
 | `F10` / `F11` | Zoom out / in |
 | `Insert` | Force enter / exit a dungeon — see [Dungeons](#dungeons) |
-| `PageUp` / `PageDown` | Force a floor change |
 | hold `Alt` | Give the overlay the mouse: click POIs, drag the map, scroll to zoom. Release to hand input back to the game. A blue border shows while it's held. |
 
 **F8 always opens the overlay icons-only** — POI icons floating over the live world,
@@ -126,57 +127,41 @@ coordinates inside one, and without this the marker would sit out at the cave mo
 while the cave's POIs sat far away in the inset. **1,227 of the 5,354 POIs (23%) live
 in those insets.**
 
-**Whether** you're inside is read straight out of the game's memory — it keeps a flag,
-so there's no guessing and no radius to tune. **Which** dungeon comes from mapgenie's
-own portal graph: it knows where all 131 cave mouths are and which inset each leads to,
-so the one you're standing nearest when the flag flips is the one you walked into. That
-same entrance hands the dungeon a free calibration point on the way in.
+**None of this needs calibrating** — the insets are aligned to the game's coordinates
+ahead of time and shipped in `config/dungeons.json`. The app only ever *reads* that table;
+nothing learns a dungeon transform at runtime. Placing a dungeon comes down to three
+questions the app answers from the game's own memory:
+
+**Whether** you're inside is a flag the game keeps in memory — no guessing, no threshold.
+(It means "inside a building", not specifically a dungeon; houses and shops set it too.)
+
+**Which** dungeon comes from mapgenie's own portal graph: it knows where the cave mouths
+are and which inset each leads to, so the one you're standing nearest when the flag flips
+is the one you walked into — but only within a short radius (20 game units), because
+buildings set the flag too and have no entrance at all. Beyond that radius the overlay
+just names the nearest dungeon as a *suggestion* and `Insert` accepts it.
+
+**Which floor** comes from the game's **LocalArea** pointer: its id is unique per
+(dungeon, floor) and survives falls, lifts and teleports, so the right floor is picked
+automatically on every visit with nothing to teach. (The game reports the same (x, y) on
+every floor, so height alone could never tell them apart — this is why the id matters.)
 
 (The game also keeps its own dungeon *id*, which would name the dungeon outright — but
 it's the game's numbering, not mapgenie's, and the mapping between them doesn't exist
 yet. `tools/zoneLog.js` is how it gets built; see `FINDINGS.md`.)
 
-**You have to do one thing, once.** Every inset is drawn at the same scale, so all of
-them share one transform apart from an offset — and walking through a doorway supplies
-that offset for free. But that shared scale has to be measured once:
-
-1. Go into any dungeon.
-2. In the control window, hit **Start Calibration** and place 3 points, exactly as you
-   would for the world map (walk to a spot, click yourself on the inset).
-
-That's it. Every other dungeon from then on **calibrates itself the moment you walk
-in** — no clicks. The panel shows which area you're in and whether it was auto-placed.
-
-If a dungeon's marker sits slightly off, hit **Refine** *while inside it*: in a dungeon
-Refine **shifts** the inset rather than re-fitting it (the scale is already known and
-isn't in question), so you can just drag yourself into place.
-
-Two dungeons have no entrance in mapgenie's data at all — **Vernworth - Southern
-Ruins** and **Sealed Mining Shaft** — so they need `Insert` and a manual calibration.
-
-### Floors
-
-A multi-floor dungeon needs **one keypress per floor, once**. Stand on a floor and press
-`PageUp` / `PageDown` until the panel names the right one; the app then measures how high
-that floor sits and remembers it for that dungeon. After that your height picks the floor
-on its own, every visit, forever.
-
-Why it has to be taught at all: **the game reports the same (x, y) on every floor.** Two
-floors differ in height and in nothing else, so there is no way to tell them apart without
-knowing what height each one is at — and that's dungeon-specific (floors sit anywhere from
-6 to 17 game units apart).
-
-Press the key whenever the floor is wrong, including mid-staircase — the height is only
-recorded once you've settled somewhere flat, so the stairs can't confuse it.
+Two dungeons have no entrance in mapgenie's data at all — **Vernworth - Southern Ruins**
+and **Sealed Mining Shaft**. Both now carry a trusted LocalArea id, so the pointer names
+them on entry anyway; `Insert` is a legacy fallback for forcing in / out.
 
 ### When it guesses wrong
 
-In/out comes from the game, so that shouldn't need correcting. What it can't see:
+In/out and the floor both come from the game, so those shouldn't need correcting. The one
+thing the app can't see is a dungeon it's standing too far from the entrance of (or one
+with no entrance in mapgenie's data). There the overlay names its best guess and:
 
-- **A floor change**, until you've taught it that floor (above). Dropping through a hole
-  to the level below is the case to watch for.
-- `Insert` — force in / out. Mainly for the two dungeons with no entrance in mapgenie's
-  data, where "nearest entrance" has nothing right to pick.
+- `Insert` — force in / out, accepting that guess (it skips the entrance radius, because
+  then the call is yours).
 
 ## Building a portable .exe
 
@@ -208,10 +193,14 @@ Two things about the packaged build that are easy to get wrong:
 
 ## Repo layout
 
-- `src/main/` — Electron main: the 30 Hz memory poll, hotkeys, the overlay window.
+- `src/main/` — Electron main: the 30 Hz memory poll, hotkeys, the overlay window,
+  area tracking (`areaTracker.js`), the LocalArea floor reader (`localAreaReader.js`),
+  and the offline map cache (`tileCache.js`, `httpMirror.js`, `assetCapture.js`).
 - `src/renderer/` — both windows, and `mapAgent.js`, the script injected into the
-  mapgenie page (marker, follow, zoom, icons-only, hide-found, found-sync).
-- `config/` — `dd2.offsets.json` (the memory findings) and the calibration.
+  mapgenie page (marker, follow, zoom, icons-only, hide-found, found-sync, offline).
+- `config/` — `dd2.offsets.json` (the memory findings), `calibration.json` (the
+  hand-authored world affine), `dungeons.json` (the per-dungeon inset transforms, app
+  read-only), and `areas.json` (buildings you've named).
 - `tools/` — the reverse-engineering scripts the offsets were found with. Not part
   of the app; run them from the repo root (`node tools/testChains.js`). Their dumps
   and logs are gitignored — gigabytes, and all reproducible.

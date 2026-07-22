@@ -1,35 +1,33 @@
 # World calibration & follow rendering
 
-The world affine and Refine, the locked-centre follow loop, and heading-up map rotation.
+The world affine, the locked-centre follow loop, and heading-up map rotation.
 
 See also: [mapgenie map internals](mapgenie-map.md), [dungeons & area tracking](dungeons-areas.md).
 
 - App reads the player's **absolute world position** directly, via a stable
   pointer chain to the global coordinate (survives reload + full restart). No
   dead reckoning, no drift, fast-travel/teleport just works.
-- Calibration: click 3+ in-game landmarks on the map -> least-squares **full 2D
-  affine** fit (`lng = a*gx + b*gy + c`, `lat = d*gx + e*gy + f`) + optional Refine
-  offset. The `b`/`d` cross-terms carry the ROTATION between the game's world axes
-  and the map's north-up axes; the earlier per-axis separable fit
-  (`lng=a*gx+b`, `lat=c*gy+d`) omitted them and so drifted linearly with distance
-  from the calibration points on long runs. 3 non-collinear points give an exact
-  fit (pick a spread-out triangle, not a line); more points average click error.
-  Because the coords are absolute, **calibration is permanent across sessions**
-  (recalibrate once). Legacy separable calibration files are still honored on load
-  (detected by the absence of `e`/`f`).
-- **Accumulating Refine (the drift fix).** Scale is estimated from the SPREAD of
-  the points, so a clustered calibration drifts in proportion to distance from it
-  (each teleport showed error on whichever axis it traveled farthest along). Refine
-  no longer stores a constant offset (only correct at one spot); it now treats the
-  correction as a NEW correspondence point, appends it to `calibration.points`, and
-  re-solves the whole affine. Teleport destinations are far apart, so a few
-  jump→Refine cycles pin the scale and converge to an exact fit. The panel reports
-  `max fit error ~N game units` (watch it fall toward 0) and warns via
-  `calibrationQuality` when the points are too clustered / near-collinear. If that
-  error plateaus well above 0 with many well-spread points, mapgenie's map isn't
-  perfectly to-scale (warped) and a single global affine can't be exact — piecewise
-  correction would be the next step. Needs one fresh calibration on this version
-  first (older saves lack stored `points`, so Refine falls back to a local offset).
+- **The world affine is hand-authored now — there is no in-app calibration or
+  Refine.** `config/calibration.json` is a **pure similarity** transform
+  (`a = |e|`, `b = d = 0`: uniform scale, no rotation, no shear) with **no `points`
+  array**. It was re-solved 2026-07-20 by dragging the whole baked overworld map
+  onto mapgenie's tiles (`.map/worldMapAligner.html`); landing on exact conformality
+  by hand is the evidence it's right. `apply`/`invert` in `calibration.js` still
+  read the general `a,b,c,d,e,f` form (and still honour legacy separable files by the
+  absence of `e`/`f`), but nothing writes it from the app. See `CLAUDE.md`
+  ("Coordinates"). *Retired below: the old 3-point click fit and the accumulating
+  Refine loop.*
+- **RETIRED — the 3-point click calibration + accumulating Refine.** The app used to
+  let you click 3+ in-game landmarks on the map for a least-squares full-2D-affine
+  fit, then nudge it with a **Refine** that appended each correction to
+  `calibration.points` and re-solved (reporting `max fit error` / `calibrationQuality`).
+  None of that exists any more: no `solveAffine`, no `.points`, no Refine, no
+  calibration UI in `index.html`. It was replaced because a hand-authored similarity
+  is exactly conformal, which the click-fit never was (it came out slightly rotated
+  and anisotropic — fit error). The historical reason the fit used a full affine with
+  `b`/`d` cross-terms was that a separable `lng=a*gx+b, lat=c*gy+d` fit omitted the
+  world→map rotation and drifted linearly with distance; the re-solve removed the
+  rotation entirely instead of fitting it.
 - Webview `dom-ready` timing bug fixed (guarded `runInWebview`).
 - **Follow rendering (hard-won).** mapgenie's map is Mapbox GL (minified; POI icons
   are GPU symbol layers, `_fadeDuration` 300ms by default). SHIPPED approach
@@ -95,6 +93,7 @@ See also: [mapgenie map internals](mapgenie-map.md), [dungeons & area tracking](
     whose `project()` models bearing, run a straight line on each compass heading,
     and assert the bearing settles on the run direction and the arrow on -90.
 - **Live coord readout** in the control panel (`local` vs `world`), a **Follow
-  player** checkbox, the overlay's settings (opacity/brightness sliders, auto-zoom,
-  hide-found), and a **Refine** message reporting the correction in game X/Y units.
+  player** checkbox, and the overlay's settings (opacity/brightness sliders,
+  auto-zoom, hide-found). (There used to be a **Refine** readout here reporting the
+  correction in game X/Y units — gone with the calibration flow above.)
 

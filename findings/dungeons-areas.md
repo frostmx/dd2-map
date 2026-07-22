@@ -352,12 +352,12 @@ hand-tuned rescale looked applied, played correctly for one session, then quietl
 with nothing in the log to say so. Anything that re-introduces a runtime writer for dungeon
 transforms brings that failure mode back.
 
-What survives from this era: `insetLinear` itself, seeded once by running the ordinary
-3-point flow inside a single dungeon, which is why every dungeon after the first cost zero
-clicks. `config/calibration.json` (the world affine, and Refine) is still written **only by
-the renderer** — one file with two writers would let a world Refine clobber dungeon work.
-`config/mapgenie-areas.json` remains a derived cache of the extracted graph (gitignored;
-re-extracted on every launch).
+What survives from this era: `insetLinear` itself — originally seeded once by running the
+old 3-point flow inside a single dungeon, and since then re-solved and hand-authored into
+`config/dungeons.json` (the app only reads it). `config/calibration.json` (the world affine)
+is no longer written by the app at all — it's authored by hand via `.map/worldMapAligner.html`
+(the in-app Refine/point-fit that used to write it is gone). `config/mapgenie-areas.json`
+remains a derived cache of the extracted graph (gitignored; re-extracted on every launch).
 
 ### Not done yet (dungeons)
 

@@ -21,8 +21,9 @@ config/cache.json
 # Derived cache: mapgenie's region/portal graph, re-extracted from the live page on
 # every launch (src/renderer/mapAgent.js's __dd2_extract_areas). 300KB of churn, and
 # worthless without mapgenie reachable anyway — and if it isn't, there's no map to
-# put the markers on either. config/areas.json is NOT ignored: that one holds the
-# solved per-dungeon transforms, which cost real playtime to produce.
+# put the markers on either. config/dungeons.json (the solved per-dungeon inset
+# transforms) and config/areas.json (buildings you've named) are NOT ignored: both
+# hold work that cost real playtime to produce.
 config/mapgenie-areas.json
 
 # The game's own map, pulled out of DD2's paks: the extractor scripts, the two
