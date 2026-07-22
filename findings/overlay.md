@@ -41,6 +41,31 @@ F9 base map on/off, F10/F11 zoom out/in, hold Alt for mouse.
     mouse, so clearing the clip once on Alt-down doesn't stick. The clip is
     system-wide state (not per-process), so `ClipCursor(NULL)` from our process
     works — we just have to keep calling it, every poll tick while Alt is held.
+  - **With REFramework installed, DD2 STEALS the foreground back too, so the grab
+    also has to be re-asserted every tick.** REFramework hooks DD2's window
+    procedure, which keeps DD2's input alive independent of Win32 focus — so a tick
+    or two after our `forceForeground(overlay)` succeeds, DD2 calls
+    SetForegroundWindow on itself again and, being foreground, eats every click on
+    the overlay. Symptom: the cursor appears and moves freely (the clip release is
+    winning) but clicks land on nothing; an Alt-Tab or F8×2 fixes it until you next
+    click in-game. Confirmed by logging the foreground each tick — it flipped
+    overlay → DD2 mid-interaction. Fix mirrors the ClipCursor one: while
+    interactive, if the foreground isn't the overlay, `forceForeground(overlay)`
+    again, every poll tick (`index.js` input loop). One grab on toggle-on is not
+    enough against REFramework.
+  - **Residual (accepted): under REFramework the FIRST Alt still needs one real
+    click on the overlay before POI hover/clicks respond** — the cursor appears but
+    the map isn't live until you click once, then it's fine and stays fine. Root
+    cause is last-input ownership: `SetForegroundWindow` is only granted to the
+    process that received the last input event; while you're playing that's DD2, so
+    both windows can grab (ours via the AttachThreadInput bypass) and flap for a few
+    ticks. A real click hands last-input ownership to us, after which Windows DENIES
+    DD2's re-grab and it settles. **Tried and did NOT help:** synthesising that
+    hand-off with `SendInput` of a zero-delta `MOUSEEVENTF_MOVE` from our process on
+    toggle-on — a (0,0) move is apparently coalesced away and never counts as input,
+    so ownership never transfers. A non-zero move or a synthetic click would risk
+    disturbing the game camera. One manual click is cheap, so this is left as-is;
+    don't re-attempt the zero-move SendInput.
 - **Alt must LOCK follow, not just suspend it.** `__dd2_apply` cancels a manual pan
   whenever the player moves past the deadband, so any drift while you were dragging
   yanked the map back to centre mid-pan. `__dd2_interactive_lock__` blocks that

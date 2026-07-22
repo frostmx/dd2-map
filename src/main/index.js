@@ -1059,6 +1059,17 @@ function startInputPolling() {
       // is system-wide state, so keep clearing it the whole time we're interactive.
       if (interactiveOn && cfg.focusable !== false && overlayWindow.isEnabled()) {
         win32Input.releaseCursorClip();
+        // DD2 steals the foreground back a tick or two after we grab it — with
+        // REFramework hooking its window proc, DD2's input stays alive regardless
+        // of Win32 focus, so it re-asserts SetForegroundWindow and then eats every
+        // click on the overlay. One grab on toggle-on isn't enough; re-assert every
+        // tick until the overlay actually holds the foreground, exactly like we keep
+        // re-clearing the cursor clip above. (Confirmed by logging: fg flipped
+        // overlay -> DD2 mid-interaction.)
+        const hwnd = overlayWindow.getHwnd();
+        if (hwnd && win32Input.foregroundWindow() !== hwnd) {
+          win32Input.forceForeground(hwnd);
+        }
       }
 
       if (!cfg.hideWhenGameUnfocused || !overlayWindow.isEnabled()) return;
