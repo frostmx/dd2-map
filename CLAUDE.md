@@ -13,7 +13,13 @@ memory: the memory offsets and how they were found, and — more importantly —
 long list of things that *look* like they should work and don't (Mapbox layer
 visibility, Windows foreground rules, asar write-protection). Most of them cost real
 debugging time and are not rediscoverable from the code alone. This file covers
-*where* things live; `FINDINGS.md` covers *why* they are that way.
+*where* things live; the findings cover *why* they are that way.
+
+`FINDINGS.md` itself is now just an **index** — a row per topic with a description
+and grep keywords. The findings live in `findings/<topic>.md`. Start at the index,
+open the one or two topics your change touches. When you learn something worth
+keeping, append it to the topic file it belongs to; only edit the index if you are
+adding a whole new topic.
 
 ## Commands
 
@@ -102,7 +108,8 @@ drift apart.
   it**. Nothing in the app writes a dungeon transform. That is deliberate: the app *used* to
   auto-calibrate dungeons from doorway crossings and re-merge a second table over this one on
   every launch, and that silent write-back is exactly what let a rescale look applied and then
-  quietly revert (see FINDINGS "single-source dungeon transforms"). Dungeons come from the
+  quietly revert (see `findings/dungeons-areas.md`, "Retired: dungeons used to calibrate
+  themselves from doorway crossings"). Dungeons come from the
   LocalArea pointer + this authored table now — no runtime calibration.
 
 `config/areas.json` still exists but holds **only `places`** (buildings you've named with
@@ -142,8 +149,8 @@ comes from the LocalArea pointer):
   from it. Height plays no part. The old height-learning path (`PageUp`/`PageDown`,
   `areas.floorHeights`) was **removed** — it was fed *local* height, which rebases per
   streaming-cell, so a floor could read "100u off itself" across a cell boundary. (The room
-  id at `+FA62C94` was never a floor either.) See FINDINGS, "Height-based floor mechanic
-  retired".
+  id at `+FA62C94` was never a floor either.) See `findings/dungeons-areas.md`, "Which
+  floor? — the height mechanic, RETIRED".
 
 **Most interiors are not dungeons at all** — they're houses, shops, inns, and mapgenie
 draws no inset for any of them. Nothing needs placing (indoors the game still reports true
@@ -153,7 +160,9 @@ world coords, so you're already drawn in the right building); only the *name* is
 doorway you're standing in, and main saves it to `areas.json` under `places`. That doorway
 is then recognised forever: the HUD names the building, and no dungeon is guessed there
 again. It binds *your* position, not the POI's (mapgenie's icon can sit on a roof), and
-refuses past `placeRadius` (40u).
+refuses past `placeRadius` (40u). **`Home` is unbound by default** (`rememberPlace: null`)
+— the LocalArea pointer names buildings now — so on stock config this mechanic is dormant
+and the HUD never offers it; rebind it in `config/overlay.json` to use it.
 
 `Insert` covers the two dungeons mapgenie has no entrance for (both now also carry trusted
 LocalArea ids, so the pointer names them on entry — `Insert` is a legacy fallback).
@@ -161,7 +170,7 @@ LocalArea ids, so the pointer names them on entry — `Insert` is a legacy fallb
 Where the tracker won't guess, it says so: `tracker.hint()` returns a structured
 "what I'm unsure about, and which keys settle it" (or null), main turns it into English
 (it owns the hotkey names — `describeHint`, whose `actions` are the offers: `Home` = it's
-this building, `Insert` = it really is that dungeon), and it rides the position feed to
+this building (only when bound), `Insert` = it really is that dungeon), and it rides the position feed to
 **both** windows. The overlay draws it as `#areaHud`; the control window appends it to the coords
 readout. A guess the player can't see is a guess the player can't correct — that is what
 let a 219u mis-calibration sit in the console unnoticed.

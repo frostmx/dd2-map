@@ -974,7 +974,7 @@ function arLoop() {
 
   // Marker style per collectible kind — colour AND shape, so each reads at a glance:
   //   token  = green circle (it's a coin)   beetle = yellow diamond (golden beetle)
-  //   chest  = blue square                  (chests not wired as POIs yet; ready for them)
+  //   chest  = blue square
   const KIND_STYLE = {
     token: { color: '#4ade80', shape: 'circle' },
     beetle: { color: '#ffd24a', shape: 'diamond' },

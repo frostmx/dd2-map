@@ -14,6 +14,23 @@ contextBridge.exposeInMainWorld('dd2', {
   setOverlaySetting: (key, value) => ipcRenderer.send('overlay:setting', { key, value }),
   edgeArtAvailable: () => ipcRenderer.invoke('overlay:edge-available'),
 
+  // Offline cache: a local snapshot of mapgenie's tiles + page bundle, so the map still
+  // works with mapgenie unreachable. Exactly one backup slot; see cacheStore.js.
+  loadCacheStatus: () => ipcRenderer.invoke('cache:status'),
+  buildCache: () => ipcRenderer.invoke('cache:build'),
+  cancelCacheBuild: () => ipcRenderer.send('cache:cancel'),
+  revertCache: () => ipcRenderer.invoke('cache:revert'),
+  onCacheProgress: (callback) => ipcRenderer.on('cache:progress', (_event, data) => callback(data)),
+  // Map source: 'auto' (probe on startup, fall back to cache if mapgenie is down),
+  // 'online' (never use the cache), 'offline' (always use it).
+  setMapSource: (source) => ipcRenderer.send('cache:source', source),
+  probeMapgenie: () => ipcRenderer.invoke('cache:probe'),
+  onCacheState: (callback) => ipcRenderer.on('cache:state', (_event, data) => callback(data)),
+  // Revert restores calibration.json, and this window caches the affine in a module-level
+  // variable loaded once at startup — without this push the marker would keep using the
+  // pre-revert transform until restart.
+  onCalibrationChanged: (callback) => ipcRenderer.on('calibration:changed', (_event, data) => callback(data)),
+
   // Dungeon areas: mapgenie's portal graph, and the (read-only) per-dungeon inset transforms.
   // Dungeon transforms are authored in config/dungeons.json — there is no in-app calibration.
   saveAreaMetadata: (meta) => ipcRenderer.invoke('areas:metadata', meta),

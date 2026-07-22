@@ -813,6 +813,13 @@
     return `
   (function() {
     var FOUND_PREFIX = '__DD2_FOUND__';
+    // The whole found-set, for the local offline mirror. Emitted alongside every mark
+    // AND once at install time — that install-time line is what makes "online, the
+    // server wins" free: mapgenie has just filled the store from the server, so it
+    // overwrites our mirror with the authoritative set before anything else can.
+    // Full set rather than a delta: marks are rare, so it costs nothing, and it
+    // removes a whole class of drift bug.
+    var FOUNDSET_PREFIX = '__DD2_FOUNDSET__';
 
     window.__dd2_install_found_sync = function() {
       if (window.__dd2_found_sync_installed__) return true;
@@ -836,24 +843,50 @@
         var before = foundSet();
         var result = innerDispatch(action);
         try {
+          // __dd2_restoring_found__ suppresses the bridge while an offline restore is
+          // replaying the mirror back in: without it, restoring 64 marks would emit 64
+          // console lines, replay 64 actions into the other window (which is restoring
+          // the same set itself), and rewrite found.json mislabelled as 'offline'.
           if (action && typeof action === 'object' && action.type
-              && !action.__dd2_mirrored__ && foundSet() !== before) {
+              && !action.__dd2_mirrored__ && !window.__dd2_restoring_found__
+              && foundSet() !== before) {
             console.log(FOUND_PREFIX + JSON.stringify(action));
+            console.log(FOUNDSET_PREFIX + JSON.stringify(Object.keys(foundSet() || {})));
           }
         } catch (e) { /* never let the bridge break the app's own dispatch */ }
         return result;
       };
+
+      // The authoritative set, as the server just gave it to us.
+      try {
+        console.log(FOUNDSET_PREFIX + JSON.stringify(Object.keys(foundSet() || {})));
+      } catch (e) { /* store not shaped as expected; marks will still resend it */ }
       return true;
     };
 
-    // Applies a mark that happened in the OTHER window.
-    window.__dd2_apply_found_action = function(action) {
-      if (!action || !window.store) return false;
-      action.__dd2_mirrored__ = true; // stops it bouncing straight back
+    // Apply a single found toggle to THIS window's map, no store/network. Main calls this
+    // on the overlay guest when a right-click mark happens in the control window, so the
+    // overlay (which hides found POIs) updates immediately instead of waiting for a reload.
+    window.__dd2_set_found_one = function(id, val) {
+      if (!window.map) return false;
+      id = Number(id);
+      var srcs = ['locations-data', 'text-locations-data'];
+      for (var s = 0; s < srcs.length; s++) {
+        try { window.map.setFeatureState({ source: srcs[s], id: id }, { found: !!val }); } catch (e) {}
+      }
+      window.__dd2_found_local__ = window.__dd2_found_local__ || new Set();
+      if (val) window.__dd2_found_local__.add(id); else window.__dd2_found_local__['delete'](id);
+      try { window.map.triggerRepaint(); } catch (e) {}
+      return true;
+    };
 
-      // Belt and braces: the mark is ALREADY persisted by the window it happened
-      // in, so nothing here may write to the server. Even if some middleware we
-      // haven't read tried to, this blocks it for the duration of the replay.
+    // Runs fn with every write to the found-locations endpoint suppressed.
+    //
+    // Two callers, same reason: neither a mirrored mark (already persisted by the
+    // window it happened in) nor an offline restore (never reached the server and
+    // must not now) may write. Even if some middleware we haven't read tried to,
+    // this blocks it for the duration of the call.
+    function withWritesBlocked(fn) {
       var realFetch = window.fetch;
       var realSend = XMLHttpRequest.prototype.send;
       function isWrite(u) { return /\\/api\\/v1\\/user\\/locations/.test(String(u)); }
@@ -866,15 +899,166 @@
         return realSend.apply(this, arguments);
       };
       try {
-        window.store.dispatch(action);
+        return fn();
       } finally {
         window.fetch = realFetch;
         XMLHttpRequest.prototype.send = realSend;
       }
+    }
+
+    // Applies a mark that happened in the OTHER window.
+    window.__dd2_apply_found_action = function(action) {
+      if (!action || !window.store) return false;
+      action.__dd2_mirrored__ = true; // stops it bouncing straight back
+      withWritesBlocked(function() { window.store.dispatch(action); });
+      return true;
+    };
+
+    // Restores the locally-mirrored found-set. Used OFFLINE, where mapgenie's server
+    // isn't there to populate the store the way it does on a normal load.
+    //
+    // BELT AND BRACES, because mapgenie's own mark path can't be trusted offline.
+    //
+    // The obvious route is their setLocationFound CustomEvent — the only way to trigger a
+    // genuine mark from outside, since the Redux action type is minified to a single
+    // letter and can't be hand-written. But that event drives the full mark path, and the
+    // path runs through a THUNK that talks to the server. Measured offline: 25/25 events
+    // dispatched, and 0 marks landed — store and feature-state both still empty. The
+    // thunk gives up before the reducer ever sees anything.
+    //
+    // So the visual truth is set DIRECTLY instead:
+    //   map.setFeatureState({source:'locations-data', id}, {found:true})
+    // which is precisely what their own middleware ends up calling, and is the exact
+    // input the found-fade paint expression reads (see findings/mapgenie-map.md — found
+    // is a paint expression on the locations layer, not a layer of its own, and Mapbox
+    // filters cannot read feature-state at all). The CustomEvent is still fired as a best
+    // effort so mapgenie's own UI list agrees when it can.
+    //
+    // THE TRAP: setFeatureState on a source whose features haven't loaded is SILENTLY
+    // DROPPED — no error, the mark just doesn't take. So wait until locations-data
+    // actually has features before applying, the same retry shape installFoundSync uses.
+    // BOTH sources, because hide-found fades two layers: 'locations' (icons, reading
+    // locations-data) and 'location-titles' (labels, reading text-locations-data). Set
+    // only the first and the icon dims while its label stays bright.
+    // Measured: locations-data carries 3630 of the 5372 known locations — the rest live
+    // in the circle-/polygon-/line- sources by POI shape — so a set id that doesn't take
+    // is normal, not a bug. That's why the count below reads back rather than assuming.
+    var FOUND_SOURCES = ['locations-data', 'text-locations-data'];
+
+    window.__dd2_apply_found_set = function(ids) {
+      if (!Array.isArray(ids) || ids.length === 0) return false;
+      if (!window.store || !window.map) return false;
+      // Seed the offline marker's authoritative local set with what we're restoring, so a
+      // right-click toggle knows what's already found. Done before the applied-guard so it
+      // seeds even when the visual apply already ran.
+      window.__dd2_found_local__ = window.__dd2_found_local__ || new Set();
+      ids.forEach(function(x) { window.__dd2_found_local__.add(Number(x)); });
+      if (window.__dd2_found_set_applied__) return true;
+
+      var attempts = 0;
+      function sourceReady() {
+        try {
+          // Guard order matters for CONSOLE NOISE: querySourceFeatures /
+          // getFeatureState throw "There is no tile manager with ID 'locations-data'"
+          // (and MapLibre logs it) if called before the source's tile manager exists.
+          // getSource never throws and returns null until the style has the source;
+          // isSourceLoaded then reports whether its data is in. Only once both pass is
+          // it safe to touch feature-state — so this ordering is what stops the polling
+          // from spamming that error every 500ms while the map is still loading.
+          if (!window.map.getSource('locations-data')) return false;
+          return !!window.map.isSourceLoaded('locations-data');
+        } catch (e) { return false; }
+      }
+
+      function apply() {
+        attempts++;
+        // ~15s, then go ahead anyway: a stale mark is better than none, and the
+        // feature-state write is harmless if it lands nowhere.
+        if (!sourceReady() && attempts < 30) { setTimeout(apply, 500); return; }
+        window.__dd2_found_set_applied__ = true;
+        var already = {};
+        try { already = window.store.getState().user.foundLocations || {}; } catch (e) {}
+        var applied = 0;
+        window.__dd2_restoring_found__ = true;
+        withWritesBlocked(function() {
+          for (var i = 0; i < ids.length; i++) {
+            var id = Number(ids[i]);
+            for (var s = 0; s < FOUND_SOURCES.length; s++) {
+              try {
+                window.map.setFeatureState({ source: FOUND_SOURCES[s], id: id }, { found: true });
+              } catch (e) { /* source absent in this style build */ }
+            }
+            // setFeatureState does NOT throw for an id that no feature has — it just
+            // stores state nobody reads. So count what actually took, by reading back.
+            try {
+              var back = window.map.getFeatureState({ source: 'locations-data', id: id });
+              if (back && back.found) applied++;
+            } catch (e) {}
+            // Best effort: keeps mapgenie's own list in agreement when the path works.
+            try {
+              document.dispatchEvent(new CustomEvent('setLocationFound', {
+                detail: { locationId: id, found: true }
+              }));
+            } catch (e) {}
+          }
+        });
+        window.__dd2_restoring_found__ = false;
+        window.map.triggerRepaint();
+        console.log('__DD2_FOUNDSET_APPLIED__' + applied + '/' + ids.length);
+      }
+
+      apply();
       return true;
     };
 
     return window.__dd2_install_found_sync();
+  })();
+`;
+  }
+
+  // Offline POI marking. mapgenie's own checklist can't work offline (it needs a login +
+  // its server), so we mark POIs ourselves: right-click a POI to toggle its found state.
+  //
+  // RIGHT-click on purpose — mapgenie binds LEFT-click on POIs (opens its detail popup),
+  // so contextmenu never fights its handlers and needs no "mark mode". The found state is
+  // set exactly the way __dd2_apply_found_set restores marks (feature-state on both POI
+  // sources), so it drives the same found-fade paint expression and can't conflict with
+  // hide-found. Offline the Redux store's foundLocations is empty (logged-out page), so
+  // __dd2_found_local__ — not the store — is the source of truth; each toggle bridges the
+  // full set to main via the __DD2_FOUNDSET__ console line, which persists it to found.json.
+  function buildOfflineMarker() {
+    return `
+  (function() {
+    if (window.__dd2_offline_marker_installed__) return true;
+    if (!window.map || typeof window.map.queryRenderedFeatures !== 'function') return false; // renderer retries
+    window.__dd2_offline_marker_installed__ = true;
+
+    window.__dd2_found_local__ = window.__dd2_found_local__ || new Set();
+    var SOURCES = ['locations-data', 'text-locations-data'];
+    var FOUNDSET_PREFIX = '__DD2_FOUNDSET__';
+    var MARK_PREFIX = '__DD2_MARK__';
+
+    function setFound(id, val) {
+      for (var s = 0; s < SOURCES.length; s++) {
+        try { window.map.setFeatureState({ source: SOURCES[s], id: id }, { found: val }); } catch (e) {}
+      }
+    }
+
+    window.map.on('contextmenu', function(e) {
+      var hits = window.map.queryRenderedFeatures(e.point, { layers: ['locations'] });
+      var f = hits && hits[0];
+      if (!f || f.id == null) return;
+      var id = Number(f.id);
+      var nowFound = !window.__dd2_found_local__.has(id);
+      setFound(id, nowFound);
+      if (nowFound) window.__dd2_found_local__.add(id); else window.__dd2_found_local__['delete'](id);
+      window.map.triggerRepaint();
+      // Full set -> main -> found.json (recordFoundSet debounces + saves).
+      try { console.log(FOUNDSET_PREFIX + JSON.stringify(Array.from(window.__dd2_found_local__))); } catch (err) {}
+      // Single toggle -> main -> overlay guest, so the overlay updates without a reload.
+      try { console.log(MARK_PREFIX + JSON.stringify({ id: id, found: nowFound })); } catch (err) {}
+    });
+    return true;
   })();
 `;
   }
@@ -1109,30 +1293,49 @@
     // false while the map object / style isn't up yet (dom-ready fires well before
     // either); the caller retries.
     if (!window.map || typeof window.map.getSource !== 'function') return false;
-    var style;
-    try { style = window.map.getStyle(); } catch (e) { return false; }
-    if (!style || !style.sources) return false;
-    var ids = Object.keys(style.sources);
-    if (!ids.length) return false;
 
-    var clamped = 0;
-    ids.forEach(function(id) {
-      var src = window.map.getSource(id);
-      if (!src || src.type !== 'raster') return;
-      if (typeof src.maxzoom === 'number' && src.maxzoom > ${max}) {
-        src.maxzoom = ${max};
-        clamped++;
-      }
-    });
-    // SourceCache recomputes its covering tiles on the next update, so a repaint is
-    // all it takes for the new ceiling to bite.
-    if (clamped) window.map.triggerRepaint();
-    return true;
+    // One-shot clamping is NOT enough: mapgenie rebuilds its style under us — the 2-layer
+    // base style then the full stream, a World/Unmoored switch, a POI-category toggle, and
+    // (offline) the cache re-serving mapgenie's verbatim maxzoom:17 style — and each
+    // rebuild creates a FRESH raster source back at 17, so z17 tiles get requested again
+    // (they 403 online, 504 through the offline mirror). So re-assert on styledata/idle
+    // exactly as applyBasemap/applyHideFound do. Repeated assignments are no-ops once
+    // already at ${max}, so it can't loop.
+    function applyClamp() {
+      var style;
+      try { style = window.map.getStyle(); } catch (e) { return false; }
+      if (!style || !style.sources) return false;
+      var ids = Object.keys(style.sources);
+      if (!ids.length) return false;
+      var clamped = 0;
+      ids.forEach(function(id) {
+        var src = window.map.getSource(id);
+        if (!src || src.type !== 'raster') return;
+        if (typeof src.maxzoom === 'number' && src.maxzoom > ${max}) {
+          src.maxzoom = ${max};
+          clamped++;
+        }
+      });
+      // SourceCache recomputes its covering tiles on the next update, so a repaint is
+      // all it takes for the new ceiling to bite.
+      if (clamped) window.map.triggerRepaint();
+      return true;
+    }
+
+    var ok = applyClamp();
+    // Hook once per guest. The SPA wipes this JS context on navigation (dom-ready
+    // re-injects), so the flag resets exactly when a fresh map needs re-hooking.
+    if (!window.__dd2_clamp_hooked__) {
+      window.__dd2_clamp_hooked__ = true;
+      window.map.on('styledata', applyClamp);
+      window.map.on('idle', applyClamp);
+    }
+    return ok;
   })()
 `;
   }
 
   window.DD2MapAgent = {
-    buildInstallMarker, buildFoundSync, buildExtractAreas, buildClampZoom, MAX_TILE_ZOOM,
+    buildInstallMarker, buildFoundSync, buildOfflineMarker, buildExtractAreas, buildClampZoom, MAX_TILE_ZOOM,
   };
 })();

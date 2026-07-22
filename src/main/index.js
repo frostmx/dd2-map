@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, globalShortcut, protocol, dialog, session } = require('electron');
 const path = require('node:path');
 const fsp = require('node:fs/promises');
 const { findProcessIdByName, findModuleBase, openProcess, readMemory, resolvePointerChain, closeHandle } = require('./memoryReader');
@@ -7,6 +7,10 @@ const overlayConfig = require('./overlayConfig');
 const configStore = require('./configStore');
 const win32Input = require('./win32Input');
 const areaStore = require('./areaStore');
+const cacheStore = require('./cacheStore');
+const tileCache = require('./tileCache');
+const httpMirror = require('./httpMirror');
+const assetCapture = require('./assetCapture');
 const { createTracker } = require('./areaTracker');
 const { createLocalAreaReader } = require('./localAreaReader');
 const timeReader = require('./timeReader');
@@ -130,6 +134,51 @@ const ZONE_WINDOW_SIZE = 32;
 
 const CALIB_PREFIX = '__DD2_CALIB__';
 const FOUND_PREFIX = '__DD2_FOUND__';
+// The whole found-set, emitted by the same dispatch patch that emits FOUND_PREFIX, plus
+// once at install time. That install-time emission is what makes "online, the server
+// wins" free: mapgenie has just populated the store from the server, so the first line
+// we see overwrites our mirror with the authoritative set. No merge logic anywhere.
+const FOUNDSET_PREFIX = '__DD2_FOUNDSET__';
+// A single offline right-click mark in the control window; mirrored to the overlay guest
+// (which hides found POIs) so it updates immediately instead of on the next reload.
+const MARK_PREFIX = '__DD2_MARK__';
+function mirrorMarkToOverlay(json) {
+  if (!overlayGuest || overlayGuest.isDestroyed()) return;
+  let m;
+  try { m = JSON.parse(json); } catch { return; }
+  overlayGuest.executeJavaScript(
+    `window.__dd2_set_found_one && window.__dd2_set_found_one(${Number(m.id)}, ${!!m.found})`
+  ).catch(() => { /* overlay reloading; restoreFoundSet will repaint it */ });
+}
+
+// Debounced because a bulk region-mark would otherwise rewrite the file dozens of times.
+let foundSaveTimer = null;
+let pendingFound = null;
+function recordFoundSet(json) {
+  try {
+    pendingFound = JSON.parse(json);
+  } catch {
+    return;   // malformed bridge line; the next mark will resend the whole set anyway
+  }
+  if (foundSaveTimer) clearTimeout(foundSaveTimer);
+  foundSaveTimer = setTimeout(() => {
+    foundSaveTimer = null;
+    if (!pendingFound) return;
+    // OFFLINE the logged-out page's store is empty, so buildFoundSync's install-time
+    // emission is an empty set. Don't let that clobber real offline marks the user made by
+    // right-click (which persist only in found.json). A non-empty emission — including our
+    // marker's — still saves normally. Online, the (authoritative) server set always wins.
+    if (offlineMode && Array.isArray(pendingFound) && pendingFound.length === 0
+        && cacheStore.loadFound().length > 0) {
+      pendingFound = null;
+      return;
+    }
+    // `source` records whether these marks ever reached mapgenie's server. Offline ones
+    // exist nowhere else, which is why revert unions rather than overwrites.
+    cacheStore.saveFound(pendingFound, offlineMode ? 'offline' : 'online');
+    pendingFound = null;
+  }, 1000);
+}
 
 // The two mapgenie webviews are separate SPA instances: each reads the found-set
 // from the server only on load, so a mark in one was invisible to the other until
@@ -137,6 +186,25 @@ const FOUND_PREFIX = '__DD2_FOUND__';
 // live (see mapAgent.js's found-sync).
 let mainGuest = null;
 let overlayGuest = null;
+
+// Offline, mapgenie's server isn't there to populate the found-set on load, so push our
+// local mirror into the guest instead. Online this is skipped entirely — the server set
+// is authoritative and arrives on its own.
+//
+// Fire-and-forget with a retry inside the guest (the locations source isn't loaded at
+// dom-ready, and setFeatureState on an unloaded source is silently dropped).
+function restoreFoundSet(guest, attempt = 0) {
+  if (!offlineMode || !guest || guest.isDestroyed()) return;
+  const ids = cacheStore.loadFound();
+  if (!ids.length) return;
+  // __dd2_apply_found_set is defined by buildFoundSync, which the RENDERER injects on its
+  // own dom-ready with its own retries — so it may not exist yet when main gets here.
+  guest.executeJavaScript(
+    `!!(window.__dd2_apply_found_set && window.__dd2_apply_found_set(${JSON.stringify(ids)}))`
+  ).then((ok) => {
+    if (!ok && attempt < 20) setTimeout(() => restoreFoundSet(guest, attempt + 1), 500);
+  }).catch(() => { /* guest reloading; the next dom-ready will retry */ });
+}
 
 // A mark happened in one window — replay the (plain, non-networking) Redux action
 // in the other, so its store and its map both catch up.
@@ -146,6 +214,93 @@ function mirrorFoundAction(fromGuest, json) {
   target.executeJavaScript(
     `window.__dd2_apply_found_action && window.__dd2_apply_found_action(${json})`
   ).catch(() => { /* guest reloading; it'll read the fresh set from the server anyway */ });
+}
+
+// --- Where the map comes from --------------------------------------------------
+// `mapSource` is what the USER asked for; `offlineMode` is what we're actually doing.
+// They differ only in 'auto', where a startup probe decides and a background re-probe
+// can flip us back when mapgenie returns.
+//   auto    — probe at startup, use the cache only if mapgenie is unreachable
+//   online  — never touch the cache, even if mapgenie is down (today's behaviour)
+//   offline — always serve from the cache, even if mapgenie is up
+let mapSource = 'auto';
+let offlineMode = false;
+let probeTimer = null;
+
+const PROBE_TIMEOUT_MS = 3000;
+const REPROBE_MS = 60000;
+
+// HEAD, short timeout, and bypassCustomProtocolHandlers so the probe measures MAPGENIE
+// rather than our own mirror answering from disk.
+async function probeMapgenie() {
+  try {
+    const res = await session.defaultSession.fetch(assetCapture.MAP_URL, {
+      method: 'HEAD',
+      credentials: 'include',
+      bypassCustomProtocolHandlers: true,
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
+    return res.ok || res.status < 500;
+  } catch {
+    return false;
+  }
+}
+
+function cacheIsUsable() {
+  const st = cacheStore.status();
+  return !!(st.current && st.current.state === 'complete');
+}
+
+// Applies `mapSource` to the mirror. Reloads both guests only when the effective mode
+// actually changed — the SPA reloads itself often enough without our help.
+async function applyMapSource(reason) {
+  const st = cacheStore.status();
+  let wantOffline;
+
+  if (mapSource === 'online') {
+    wantOffline = false;
+  } else if (mapSource === 'offline') {
+    // An explicit request, so honour it even if the cache is only partial — but say so,
+    // because a partial cache offline looks like a calibration bug rather than a gap.
+    wantOffline = !!st.current;
+    if (!st.current) reason = 'no cache to serve';
+  } else {
+    // auto: only fall back to the cache if mapgenie is actually unreachable AND the
+    // cache is known-complete. Auto-flipping into a partial cache is worse than an
+    // honest error — see findings/offline-cache.md.
+    const online = await probeMapgenie();
+    wantOffline = !online && cacheIsUsable();
+    if (!online && !cacheIsUsable()) reason = 'mapgenie unreachable and no complete cache';
+    else if (!online) reason = 'mapgenie unreachable';
+  }
+
+  const changed = wantOffline !== offlineMode;
+  offlineMode = wantOffline;
+  httpMirror.setMode(wantOffline ? 'replay' : 'passthrough', {
+    dir: cacheStore.CURRENT,
+    offline: wantOffline,
+  });
+
+  broadcast('cache:state', {
+    source: mapSource,
+    offline: offlineMode,
+    reason: reason || null,
+    hasCache: !!st.current,
+    cacheState: st.current ? st.current.state : null,
+  });
+  console.log(`[cache] source=${mapSource} serving=${offlineMode ? 'CACHE' : 'network'}${reason ? ` (${reason})` : ''}`);
+
+  if (changed) {
+    for (const g of [mainGuest, overlayGuest]) {
+      if (g && !g.isDestroyed()) g.reload();
+    }
+  }
+
+  // While auto has us offline, keep checking whether mapgenie came back.
+  if (probeTimer) { clearInterval(probeTimer); probeTimer = null; }
+  if (mapSource === 'auto' && offlineMode) {
+    probeTimer = setInterval(() => { applyMapSource('mapgenie is back'); }, REPROBE_MS);
+  }
 }
 
 let mainWindow;
@@ -252,6 +407,15 @@ function rememberPlace() {
 // settles it. It lives here rather than in the tracker because the hotkeys are config,
 // and it's used twice — the console line and the overlay's readout — which have to agree.
 let lastHintId = null;
+let lastHintSince = 0;    // when the current hint first appeared (ms), for the log grace below
+let hintLogged = false;   // has the current hint already been written to the console
+// The tracker's "inside something — but what?" fallback flashes for a tick or two when you
+// enter a dungeon the LocalArea pointer knows, before the pointer read catches up and
+// suppresses it. The HUD self-clears, but the console log fires once and leaves a stale,
+// obsolete line ("still being drawn on the overworld") behind. Only log a hint that has
+// survived this long — long enough for the pointer to win — so genuine fallbacks (the
+// pointer truly can't read the area) still log, but transients never do.
+const HINT_LOG_GRACE_MS = 1500;
 let timeLogged = false;   // one boot-time "[time] resolved" line, not one per tick
 let camLogged = false;    // same, for the camera-frame feed
 let genLogged = false;    // same, for the first successful collected-token read
@@ -528,10 +692,16 @@ function startMemoryPolling() {
       const hintId = hint ? `${hint.code}|${hint.title}` : null;
       if (hintId !== lastHintId) {
         lastHintId = hintId;
-        if (hint) {
-          const acts = hint.actions.length ? `\n           ${hint.actions.join('\n           ')}` : '';
-          console.log(`[areas] ${hint.title} — ${hint.detail.replace(/\n/g, ' — ')}${acts}`);
-        }
+        lastHintSince = hintId ? Date.now() : 0;
+        hintLogged = false;
+      }
+      // Broadcast is unchanged (the HUD shows even the transient); only the LOG waits out
+      // the grace so the pointer can suppress a fleeting fallback before it's committed to
+      // the console.
+      if (hint && !hintLogged && Date.now() - lastHintSince >= HINT_LOG_GRACE_MS) {
+        hintLogged = true;
+        const acts = hint.actions.length ? `\n           ${hint.actions.join('\n           ')}` : '';
+        console.log(`[areas] ${hint.title} — ${hint.detail.replace(/\n/g, ' — ')}${acts}`);
       }
       const place = tracker.place();
 
@@ -632,6 +802,16 @@ function createWindow() {
     });
     webContents.on('unresponsive', () => console.log('[webview UNRESPONSIVE]'));
     webContents.on('console-message', (_e2, level, message, line, sourceId) => {
+      if (message.startsWith(MARK_PREFIX)) {
+        // The marker also emits a separate FOUNDSET line (its own console-message event)
+        // which persists to found.json; this one only mirrors the toggle to the overlay.
+        mirrorMarkToOverlay(message.slice(MARK_PREFIX.length));
+        return;
+      }
+      if (message.startsWith(FOUNDSET_PREFIX)) {
+        recordFoundSet(message.slice(FOUNDSET_PREFIX.length));
+        return;
+      }
       if (message.startsWith(FOUND_PREFIX)) {
         mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
         return;
@@ -658,6 +838,7 @@ function createWindow() {
     // via a console.log with a special prefix, since page-world script has
     // no ipcRenderer access.
     webContents.on('dom-ready', () => {
+      restoreFoundSet(webContents);
       webContents.executeJavaScript(`
         (function() {
           if (window.__dd2_click_hook_installed__) return;
@@ -745,7 +926,14 @@ function createOverlay() {
   overlay.webContents.on('did-attach-webview', (_e, webContents) => {
     webContents.setMaxListeners(30);
     overlayGuest = webContents;
+    // The overlay had no dom-ready hook at all — it needs one now so the offline
+    // found-set lands in this window too, not just the control window.
+    webContents.on('dom-ready', () => restoreFoundSet(webContents));
     webContents.on('console-message', (_e2, level, message) => {
+      if (message.startsWith(FOUNDSET_PREFIX)) {
+        recordFoundSet(message.slice(FOUNDSET_PREFIX.length));
+        return;
+      }
       if (message.startsWith(FOUND_PREFIX)) {
         mirrorFoundAction(webContents, message.slice(FOUND_PREFIX.length));
         return;
@@ -1069,8 +1257,198 @@ ipcMain.handle('view:save', (_event, data) => {
   return true;
 });
 
-app.whenReady().then(() => {
+// --- Offline cache -------------------------------------------------------------
+// The map is mapgenie's, loaded live in a <webview>, so mapgenie being down means no
+// map at all. These build and manage a local snapshot of it. See cacheStore.js for the
+// on-disk layout and why it lives in userData rather than the repo.
+
+function sendCacheProgress(data) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('cache:progress', data);
+}
+
+ipcMain.handle('cache:status', () => ({ ...cacheStore.status(), building: tileCache.isBuilding() ? cacheStore.status().building : null, offline: offlineMode }));
+
+ipcMain.handle('cache:build', async () => {
+  if (tileCache.isBuilding()) return { error: 'already building' };
+  return runBuild();
+  // NOTE: the capture window is deliberately NOT destroyed here. Destroying a webContents
+  // that used protocol.handle('https') wedges the handler for the NEXT build (verified:
+  // build 1 works, build 2 hangs). It's reused across builds and torn down at will-quit
+  // instead. It does not block app quit — mainWindow's 'closed' calls app.quit(), which
+  // closes every window. What made the app un-quittable before was a build that HUNG
+  // (leaving the window mid-load); the timeouts in assetCapture now prevent that.
+});
+
+async function runBuild() {
+  const st = cacheStore.status();
+
+  // A rebuild over a complete cache REUSES its tiles (hardlinked into the new build), so
+  // it only re-captures the page bundle — seconds, not an 8-minute re-download. This is
+  // the common case: refresh the page (e.g. logged-in variant, or a mapgenie JS update)
+  // without touching the tiles.
+  const reuseTiles = st.hasCurrent && !st.hasBuilding
+    && st.current && st.current.state === 'complete';
+
+  // Confirm in MAIN, not renderer window.confirm() — that blocks the renderer, which is
+  // drawing the marker at 60fps.
+  if (st.hasCurrent && !st.hasBuilding) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      buttons: ['Rebuild', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      title: 'Rebuild offline cache',
+      message: 'Rebuild the offline cache?',
+      detail: reuseTiles
+        ? 'The existing tiles will be reused (no re-download) and the page re-captured — '
+          + 'about a minute. The current cache moves to the backup slot, replacing any existing backup.'
+        : 'This downloads roughly 940 MB (87,382 tiles) and takes a while. '
+          + 'The current cache moves to the backup slot, replacing any existing backup.',
+    });
+    if (response !== 0) return { cancelled: true };
+  }
+
+  if (reuseTiles) {
+    sendCacheProgress({ phase: 'tiles', step: 'reusing existing tiles (no re-download)', done: 0, total: 0 });
+    cacheStore.seedBuildFromCurrent();
+  }
+
+  const out = await tileCache.start({
+    concurrency: cfg.cacheConcurrency,
+    delayMs: cfg.cacheDelayMs,
+    onProgress: sendCacheProgress,
+  });
+
+  if (out.cancelled || out.paused) {
+    // building/ is deliberately left intact so the next Create offers Resume rather
+    // than restarting the whole download.
+    return { cancelled: out.cancelled, paused: out.paused, reason: out.pauseReason };
+  }
+
+  // Tiles alone are not a map: without the page bundle, style, sprite and glyphs there
+  // is nothing to draw them into.
+  //
+  // Capture/verify run entirely on their OWN isolated session and hidden window (see
+  // assetCapture) — the real control/overlay webviews and the default session are never
+  // touched, so a build can't disturb the live map.
+  const manifest = cacheStore.readManifest(cacheStore.BUILDING);
+  manifest.missing = [];   // clear any failure note from a previous (resumed) attempt
+  try {
+    const cap = await assetCapture.capture(cacheStore.BUILDING, sendCacheProgress);
+    manifest.assets = {
+      styleJson: cap.styleJson,
+      sprite: cap.sprite,
+      spriteRetina: cap.spriteRetina,
+      glyphStacks: cap.glyphStacks,
+      apiPayloads: cap.apiPayloads,
+    };
+    manifest.http.hosts = cap.hosts || {};
+  } catch (err) {
+    if (err.message === 'cancelled') {
+      // building/ is left intact (tiles + whatever assets recorded), so Resume picks up.
+      return { cancelled: true };
+    }
+    manifest.missing = [`asset capture failed: ${err.message}`];
+    cacheStore.writeManifest(cacheStore.BUILDING, manifest);
+    return { error: `asset capture failed: ${err.message}` };
+  }
+  cacheStore.writeManifest(cacheStore.BUILDING, manifest);
+
+  // The only honest completeness check: load the map with the network refused and count
+  // what it couldn't find. Enumeration can always miss something; this can't.
+  const v = await assetCapture.verify(cacheStore.BUILDING, sendCacheProgress);
+  manifest.verify = { ranAt: new Date().toISOString(), misses: v.misses, missUrls: v.missUrls, loaded: v.loaded };
+  if (!v.loaded) manifest.missing = ['offline page did not initialise during verify — cache is not self-contained'];
+  manifest.state = cacheStore.computeState(manifest);
+  cacheStore.writeManifest(cacheStore.BUILDING, manifest);
+
+  // Snapshot the files that must travel WITH the map, so a revert restores a coherent
+  // map+calibration pair. calibration.json especially: if mapgenie ever moves their
+  // coordinates, the affine fitted to the new map is wrong for the old one.
+  const snapDir = path.join(cacheStore.BUILDING, 'snapshot');
+  await fsp.mkdir(snapDir, { recursive: true });
+  const cal = loadCalibration();
+  if (cal) await fsp.writeFile(path.join(snapDir, 'calibration.json'), JSON.stringify(cal, null, 2));
+  const meta = configStore.load('mapgenie-areas');
+  if (meta) await fsp.writeFile(path.join(snapDir, 'mapgenie-areas.json'), JSON.stringify(meta));
+  await fsp.writeFile(path.join(snapDir, 'found.json'), JSON.stringify({ ids: cacheStore.loadFound() }, null, 2));
+
+  await cacheStore.promoteBuild();
+  // The real guests were never touched by the build; applyMapSource reloads them only if
+  // the active source now resolves differently (e.g. you're on 'offline').
+  await applyMapSource('cache rebuilt');
+  return { ok: true, status: cacheStore.status(), verify: v };
+}
+
+// Cancel whichever phase is running: tiles OR asset capture/verify. Before, this only
+// stopped the tile download, so pressing Cancel during "assets: …" did nothing.
+ipcMain.on('cache:cancel', () => { tileCache.cancel(); assetCapture.cancel(); });
+
+// The manual switcher. 'auto' probes; 'online'/'offline' override it outright.
+ipcMain.on('cache:source', (_event, source) => {
+  if (!['auto', 'online', 'offline'].includes(source)) return;
+  mapSource = source;
+  configStore.save('cache', { source });
+  applyMapSource('switched by user');
+});
+
+ipcMain.handle('cache:probe', async () => {
+  const online = await probeMapgenie();
+  return { online, source: mapSource, offline: offlineMode };
+});
+
+ipcMain.handle('cache:revert', async () => {
+  const st = cacheStore.status();
+  if (!st.hasBackup) return { error: 'no backup' };
+
+  const { response } = await dialog.showMessageBox(mainWindow, {
+    type: 'warning',
+    buttons: ['Revert', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Revert offline cache',
+    message: 'Revert to the backup cache?',
+    detail: 'The current cache will be swapped into the backup slot (reverting again undoes this). '
+      + 'This ALSO restores calibration.json from the backup snapshot, which will move the player marker.',
+  });
+  if (response !== 0) return { cancelled: true };
+
+  await cacheStore.revert();
+
+  // Restoring calibration is the point of the feature, so it must actually take effect.
+  // Two things beyond writing the file:
+  //   - the tracker re-derives every doorway from this affine (same reason
+  //     calibration:save calls it), so a stale tracker silently degrades dungeon detection;
+  //   - both renderers cache the calibration in a module-level variable loaded ONCE at
+  //     startup, so without a push the marker keeps using the pre-revert affine until
+  //     restart — confusing, given you reverted specifically to fix marker placement.
+  try {
+    const restored = JSON.parse(await fsp.readFile(path.join(cacheStore.CURRENT, 'snapshot', 'calibration.json'), 'utf-8'));
+    configStore.save('calibration', restored);
+    tracker.setWorldCalibration(restored);
+    broadcast('calibration:changed', restored);
+  } catch { /* snapshot predates calibration bundling — leave the live one alone */ }
+
+  // Found-marks are UNIONed, not replaced. Online this barely matters (the server set
+  // overwrites our mirror on the next load anyway); it matters for marks made OFFLINE,
+  // which by design never reach the server and so exist nowhere else. Overwriting would
+  // lose them permanently.
+  try {
+    const snap = JSON.parse(await fsp.readFile(path.join(cacheStore.CURRENT, 'snapshot', 'found.json'), 'utf-8'));
+    const union = new Set([...cacheStore.loadFound(), ...(snap.ids || [])]);
+    cacheStore.saveFound([...union], offlineMode ? 'offline' : 'online');
+  } catch { /* no found snapshot — the live mirror stands */ }
+
+  return { ok: true, status: cacheStore.status() };
+});
+
+app.whenReady().then(async () => {
   cfg = overlayConfig.load();
+
+  // Clear any debris from a crash mid-swap, and rescue the case where current/ was
+  // renamed away but its replacement never landed. Must run before anything reads the
+  // cache, so before the windows exist.
+  await cacheStore.reconcile().catch((err) => console.log(`[cache] reconcile failed: ${err.message}`));
   // Initial F9 mode. F8 preserves it thereafter; F9 cycles it.
   overlayMode = cfg.openIconsOnly === false ? 'map' : 'icons';
 
@@ -1124,9 +1502,30 @@ app.whenReady().then(() => {
     tracker.setMetadata(cachedMeta);
   }
 
+  // What the user last chose: auto / online / offline.
+  mapSource = (configStore.load('cache') || {}).source || 'auto';
+  // Safety: never BOOT into forced-offline against a cache that isn't verified-complete.
+  // A false-complete / partial cache renders a broken map ("Cannot read 'layers'"), which
+  // looks like the app failing to start. Downgrade to 'auto' for this session (not
+  // persisted) so the map comes up on the network and the user can rebuild. Their saved
+  // 'offline' preference returns next launch once there's a good cache.
+  if (mapSource === 'offline') {
+    const cur = cacheStore.status().current;
+    if (!cur || cur.state !== 'complete') {
+      console.log(`[cache] saved source=offline but cache is ${cur ? cur.state : 'absent'} — starting in auto so the map isn't broken; rebuild to re-enable offline`);
+      mapSource = 'auto';
+    }
+  }
+
   createWindow();
   createOverlay();
   registerHotkeys();
+
+  // Decide network-vs-cache BEFORE the guests get far into loading, so a startup with
+  // mapgenie down comes up on the cache rather than showing a failed page first. The
+  // guests are already created (applyMapSource reloads them if the mode flips), and the
+  // probe is a 3s-timeout HEAD so this can't stall startup for long.
+  applyMapSource('startup').catch((err) => console.log(`[cache] startup probe failed: ${err.message}`));
   // 1ms system timer quantum so the camera setInterval actually fires fast (Windows floors
   // it at ~15.6ms otherwise — see timerResolution.js / camTimer). Released in will-quit.
   const hiRes = timerResolution.begin();
@@ -1149,6 +1548,7 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
+  assetCapture.releaseScratch();   // safe here: nothing navigates after this
   globalShortcut.unregisterAll();
   timerResolution.end();   // release the 1ms timer quantum (global setting — must be paired)
   if (readerHandle) { closeHandle(readerHandle); readerHandle = null; }

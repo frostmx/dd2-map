@@ -5,6 +5,8 @@ dist/
 # this the first feature worktree shows up as untracked content in the main checkout —
 # and a `git add -A` would happily commit a second checkout inside the first.
 .claude/worktrees/
+# Per-user Claude Code permission overrides — not shared. .claude/settings.json IS tracked.
+.claude/settings.local.json
 
 # Per-machine runtime state the app rewrites as you drag sliders and zoom. The
 # code carries working defaults (src/main/overlayConfig.js), so a fresh clone
@@ -12,6 +14,9 @@ dist/
 # tracked — those are hard-won and costly to reproduce.
 config/overlay.json
 config/view.json
+# Which map source you last picked (auto/online/offline). Per-machine, and the code
+# defaults to 'auto' without it.
+config/cache.json
 
 # Derived cache: mapgenie's region/portal graph, re-extracted from the live page on
 # every launch (src/renderer/mapAgent.js's __dd2_extract_areas). 300KB of churn, and

@@ -68,6 +68,19 @@
     <div style="opacity:0.7;font-size:11px;margin-top:2px;">
       Low brightness = darkens the game instead of washing it white.
     </div>
+    <div style="margin-top:8px;">
+      <div><strong>Offline cache</strong></div>
+      <div style="margin-top:4px;">
+        <label><input type="radio" name="mapSource" id="srcAuto" value="auto" checked /> Auto</label>
+        <label style="margin-left:8px;"><input type="radio" name="mapSource" id="srcOnline" value="online" /> Online</label>
+        <label style="margin-left:8px;"><input type="radio" name="mapSource" id="srcOffline" value="offline" /> Offline</label>
+      </div>
+      <div id="cacheServing" style="font-size:11px;margin-top:2px;color:#7fd1ff;">—</div>
+      <div id="cacheStatus" style="opacity:0.7;font-size:11px;margin-top:2px;">—</div>
+      <progress id="cacheProgress" max="100" value="0" style="width:100%;display:none;"></progress>
+      <button id="cacheBuildBtn">Create cache</button>
+      <button id="cacheRevertBtn" disabled>Revert cache</button>
+    </div>
     <div id="coords">Waiting for DD2…</div>
     <div id="area">Overworld</div>
   </div>

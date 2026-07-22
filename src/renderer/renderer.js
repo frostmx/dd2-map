@@ -38,8 +38,19 @@ webview.addEventListener('dom-ready', () => {
   markerInstalled = false;
   installZoomClamp();
   installFoundSync();
+  installOfflineMarker();
   extractAreas();
 });
+
+// Right-click a POI to toggle it found — our own marking, since mapgenie's checklist can't
+// work offline (needs a login + its server). Control window only: the overlay is
+// click-through and hides found POIs, so marking belongs here. Retries because the map
+// isn't ready at dom-ready.
+function installOfflineMarker(attempt = 0) {
+  runInWebview(window.DD2MapAgent.buildOfflineMarker()).then((ok) => {
+    if (!ok && attempt < 20) setTimeout(() => installOfflineMarker(attempt + 1), 500);
+  });
+}
 
 // Cap the raster sources at the deepest zoom mapgenie actually HAS tiles for: their
 // style claims z17, the tile server 403s it, and the map goes blank at max zoom. See
@@ -210,6 +221,126 @@ function wireMapStyle() {
   edgeR.addEventListener('change', () => { if (edgeR.checked) window.dd2.setOverlaySetting('mapStyle', 'edge'); });
 }
 wireMapStyle();
+
+// --- Offline cache ------------------------------------------------------------
+// The map is mapgenie's, loaded live, so mapgenie being down means no map. These two
+// buttons build and manage a local snapshot of it (~950MB, ~1 hour). Confirmation for
+// both destructive paths lives in MAIN (dialog.showMessageBox), not here — window.confirm
+// would block this renderer, which is driving the marker at 60fps.
+function wireCache() {
+  const buildBtn = document.getElementById('cacheBuildBtn');
+  const revertBtn = document.getElementById('cacheRevertBtn');
+  const statusEl = document.getElementById('cacheStatus');
+  const progressEl = document.getElementById('cacheProgress');
+  let building = false;
+
+  const fmtBytes = (b) => (b >= 1e9 ? `${(b / 1e9).toFixed(2)} GB` : `${Math.round(b / 1e6)} MB`);
+  const fmtEta = (s) => (s == null ? '' : s > 3600 ? `${(s / 3600).toFixed(1)}h left` : `${Math.round(s / 60)}m left`);
+
+  function render(st) {
+    if (!st) return;
+    const cur = st.current;
+    const parts = [];
+    if (!cur) {
+      parts.push('no cache');
+    } else {
+      parts.push(`${cur.state} · ${(cur.tiles.have + cur.tiles.negative).toLocaleString()} tiles · ${fmtBytes(cur.tiles.bytes)}`);
+      if (cur.completedAt) parts.push(cur.completedAt.slice(0, 10));
+    }
+    parts.push(st.hasBackup ? 'backup: yes' : 'backup: none');
+    statusEl.textContent = parts.join(' · ');
+
+    // A resumable build is worth naming explicitly — an hour of downloading is not
+    // something to silently restart from zero.
+    buildBtn.textContent = building ? 'Cancel build'
+      : st.hasBuilding ? 'Resume build'
+        : st.hasCurrent ? 'Rebuild cache' : 'Create cache';
+    revertBtn.disabled = building || !st.hasBackup;
+  }
+
+  function refresh() { return window.dd2.loadCacheStatus().then(render); }
+
+  buildBtn.addEventListener('click', async () => {
+    if (building) {
+      window.dd2.cancelCacheBuild();
+      return;
+    }
+    building = true;
+    progressEl.style.display = 'block';
+    await refresh();
+    const out = await window.dd2.buildCache();
+    building = false;
+    progressEl.style.display = 'none';
+    if (out && out.error) {
+      // The tiles are safe in building/ — a failed capture never promotes and never
+      // discards them, so "Resume build" retries just the capture near-instantly. Say so,
+      // otherwise a frozen "assets: loading page" looks like a total loss.
+      statusEl.textContent = `failed: ${out.error} — tiles kept, press Resume to retry`;
+    } else if (out && out.paused) {
+      statusEl.textContent = `paused — ${out.reason}`;
+    } else if (out && out.verify && out.verify.misses > 0) {
+      statusEl.textContent = `built but PARTIAL — ${out.verify.misses} assets missing (see manifest)`;
+    }
+    await refresh();
+  });
+
+  revertBtn.addEventListener('click', async () => {
+    revertBtn.disabled = true;
+    await window.dd2.revertCache();
+    await refresh();
+  });
+
+  window.dd2.onCacheProgress((p) => {
+    // Tiles report counts; the asset-capture and verify phases only report a step name.
+    if (p.phase !== 'tiles') {
+      progressEl.removeAttribute('value');   // indeterminate
+      statusEl.textContent = `${p.phase}: ${p.step}`;
+      return;
+    }
+    const pct = p.total ? (p.done / p.total) * 100 : 0;
+    progressEl.value = pct;
+    statusEl.textContent = p.paused
+      ? `paused — ${p.pauseReason}`
+      : `${p.done.toLocaleString()} / ${p.total.toLocaleString()} tiles (${pct.toFixed(1)}%) · ${fmtBytes(p.bytes)} · ${fmtEta(p.etaSec)}`;
+  });
+
+  refresh();
+  return refresh;
+}
+const refreshCache = wireCache();
+
+// Map source switcher. Auto probes mapgenie at startup and falls back to the cache only
+// if it's unreachable AND the cache is complete; the other two are outright overrides.
+// `#cacheServing` says which one is ACTUALLY in use, because with Auto that isn't
+// something you can infer from the radio button.
+function wireMapSource() {
+  const serving = document.getElementById('cacheServing');
+  const radios = {
+    auto: document.getElementById('srcAuto'),
+    online: document.getElementById('srcOnline'),
+    offline: document.getElementById('srcOffline'),
+  };
+
+  function renderState(s) {
+    if (!s) return;
+    if (radios[s.source]) radios[s.source].checked = true;
+    const where = s.offline ? 'serving from CACHE' : 'serving from mapgenie';
+    serving.textContent = s.reason ? `${where} — ${s.reason}` : where;
+    serving.style.color = s.offline ? '#ffd479' : '#7fd1ff';
+    if (refreshCache) refreshCache();
+  }
+
+  for (const [source, el] of Object.entries(radios)) {
+    el.addEventListener('change', () => { if (el.checked) window.dd2.setMapSource(source); });
+  }
+  window.dd2.onCacheState(renderState);
+}
+wireMapSource();
+
+// Revert restores calibration.json from the cache snapshot. `calibration` below is
+// loaded once at startup, so without this the marker would keep using the pre-revert
+// affine until restart — confusing, since you reverted to fix marker placement.
+window.dd2.onCalibrationChanged((data) => { calibration = data; });
 
 // --- Live position -> marker --------------------------------------------------
 window.dd2.onGamePosition((data) => {
