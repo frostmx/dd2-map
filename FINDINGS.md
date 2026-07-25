@@ -31,6 +31,7 @@ it is what stops it growing back into 2000 lines.
 | [dungeon-art-and-alignment.md](findings/dungeon-art-and-alignment.md) | Pulling the game's own dungeon minimap art out of memory, and the `.map` tools that align it to mapgenie's tiles. | dungeon edge art, F9, `data:` URL not a custom scheme, `TexSize`/`TexRange`, `.map/*.html`, `worldMapAligner`, `dungeonAligner`, hand alignment, `mergeLocalAreas` clobber, `src:"game"` vs `src:"aligned"` |
 | [inset-resolve-wip.md](findings/inset-resolve-wip.md) | **Paused work.** Rebasing every inset translation onto the 2026-07-20 world affine. Read this before touching `config/dungeons.json`. | `resolveInsets.py`, z16, 8 px/unit, the `ncc` block trap, `blindSearch.py`, `matchInset.py`, `sweepAreas.py`, score gate, `REGRESS`, `dungeons_resolved.json`, half-migrated `insetLinear`, tile cache, `python3.12.exe` |
 | [almanac-and-ar.md](findings/almanac-and-ar.md) | The vendored Almanac coordinate data, and the AR marker layer that projects it onto the game. | Seeker's Token ground truth, 240 correspondences, `data/almanac/`, `cameraFrameReader.js`, camera basis, FOV, the projection, eye-vs-feet, AR smoothing, `#arCanvas`, `overlay.json → ar`, collected-state, `generateManagerReader.js`, `_NeverGenetateID`, ContextDB, Golden Trove Beetle, gimmick, chests, wrong open/closed state |
+| [offline-cache.md](findings/offline-cache.md) | Baking mapgenie's tiles and assets to disk and serving them from a local mirror when mapgenie is unreachable. | `tileCache.js`, `httpMirror.js`, `assetCapture.js`, `buildOfflineMarker`, `config/cache.json`, map source `auto`/`online`/`offline` |
 
 ## Quick "where do I look"
 
@@ -42,3 +43,4 @@ it is what stops it growing back into 2000 lines.
 - **A memory read returns garbage, or breaks after a restart** → [memory-re](findings/memory-re.md)
 - **An AR marker shows the wrong state** → [almanac-and-ar](findings/almanac-and-ar.md)
 - **Settings save and then vanish** → [architecture](findings/architecture.md) (the asar is read-only)
+- **Map works with no internet, or a baked tile looks stale** → [offline-cache](findings/offline-cache.md)
