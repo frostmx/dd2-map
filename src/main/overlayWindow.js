@@ -11,6 +11,14 @@
 const { BrowserWindow, screen, app } = require('electron');
 const path = require('node:path');
 
+// ── DIAGNOSTIC MODE ──────────────────────────────────────────────
+// 0 = normal operation (load overlay.html with webview + scripts)
+// 1 = blank transparent page, FULL-SCREEN (isolates: transparent window vs content)
+// 2 = blank transparent page, SMALL 400×400 (isolates: area vs window path)
+// Change this number, restart the app, test FG stutter.
+const DIAG_MODE = 0;
+// ────────────────────────────────────────────────────────────────
+
 let overlay = null;
 let enabled = false; // user's F8 intent, distinct from isVisible() — the
                      // focus-follow watcher hides/shows within an enabled overlay
@@ -30,8 +38,14 @@ function create(cfg) {
   const display = screen.getPrimaryDisplay();
   const { x, y, width, height } = display.bounds;
 
+  // DIAG_MODE 2: small window to test if compositing cost scales with area
+  const winX = DIAG_MODE === 2 ? x : x;
+  const winY = DIAG_MODE === 2 ? y : y;
+  const winW = DIAG_MODE === 2 ? 400 : width;
+  const winH = DIAG_MODE === 2 ? 400 : height;
+
   overlay = new BrowserWindow({
-    x, y, width, height,
+    x: winX, y: winY, width: winW, height: winH,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -61,7 +75,17 @@ function create(cfg) {
     },
   });
 
-  overlay.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
+  if (DIAG_MODE === 0) {
+    overlay.loadFile(path.join(__dirname, '..', 'renderer', 'overlay.html'));
+  } else {
+    // DIAG_MODE 1 or 2: load a minimal blank transparent page — no webview,
+    // no scripts, no canvas. Just the transparent window itself.
+    overlay.loadURL('data:text/html,' + encodeURIComponent(
+      '<!doctype html><html><head><style>' +
+      'html,body{margin:0;padding:0;height:100%;background:transparent;}' +
+      '</style></head><body></body></html>'
+    ));
+  }
 
   // 'screen-saver' is the highest ordinary level — it keeps the overlay above a
   // borderless-windowed game. (3) DD2 must run in Borderless Windowed: nothing

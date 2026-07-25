@@ -625,6 +625,19 @@
       var t = window.__dd2_follow_target__;
       if (!t || !window.map || typeof window.map.project !== 'function') return;
 
+      // ── FG throttle ──────────────────────────────────────────────
+      // On a 120 Hz display with DLSS Frame Generation, the webview's rAF
+      // runs at 120 Hz.  The position feed is ~30 Hz and the easing
+      // converges in a few frames, so 60 Hz is more than enough.  Without
+      // this cap, jumpTo fires 120×/sec even when the player stands still,
+      // keeping Mapbox GL's WebGL renderer and the webview's Chromium
+      // compositor busy.  DWM must then recomposite the transparent overlay
+      // surface at 120 Hz, stealing GPU time from FG's frame generation and
+      // causing stutter in the generated (interpolated) frames.
+      var nowMs = performance.now();
+      if (window.__dd2_ff_last__ && nowMs - window.__dd2_ff_last__ < 1000/60 - 1) return;
+      window.__dd2_ff_last__ = nowMs;
+
       var d = window.__dd2_disp__;
       if (!d) { d = window.__dd2_disp__ = { lng: t.lng, lat: t.lat }; }
       d.lng += (t.lng - d.lng) * 0.3;
@@ -671,6 +684,7 @@
         if (rotating) move.bearing = bearing;
 
         var zt = window.__dd2_zoom_target__;
+        var didJump = false;
         if (typeof zt === 'number') {
           // Overlay: ease zoom toward the target and move center + zoom in ONE
           // jumpTo, so run/stand zoom changes glide instead of stepping.
@@ -680,27 +694,66 @@
           window.__dd2_disp_zoom__ += (zt - window.__dd2_disp_zoom__) * ZOOM_EASE;
           if (Math.abs(zt - window.__dd2_disp_zoom__) < 1e-4) window.__dd2_disp_zoom__ = zt;
           move.zoom = window.__dd2_disp_zoom__;
-          window.map.jumpTo(move);
+
+          // ── FG: skip jumpTo when the map is already at the target state ──
+          // Compare against the ACTUAL map state (getCenter/getZoom/getBearing)
+          // so we never skip a needed move after manual pan/zoom, resize,
+          // zoom_gliding, or interactive suspend/resume.  When the player is
+          // standing still and the eased values have converged, this lets
+          // Mapbox GL's renderer go idle, the webview's compositor go idle,
+          // and DWM reuse the old overlay surface without new GPU work.
+          var mc = window.map.getCenter();
+          var mz = window.map.getZoom();
+          var mb = window.map.getBearing();
+          var posSettled = Math.abs(mc.lng - d.lng) < 1e-9 && Math.abs(mc.lat - d.lat) < 1e-9;
+          var zoomSettled = Math.abs(mz - window.__dd2_disp_zoom__) < 1e-4;
+          // Releasing ownership below needs bearing to land on EXACT north. The
+          // usual 0.02deg tolerance would let this settled-check skip the one
+          // jumpTo that actually writes it, and since 'bearing' snaps to exactly
+          // wantB the same frame it comes within tolerance, that skip would look
+          // "settled" forever - the release condition below would never see a
+          // real bearing of exactly 0 and rotate_active would never clear.
+          // Require exact equality on that frame instead.
+          var releasingNorth = rotating && !window.__dd2_rotate__ && bearing === 0;
+          var bearingSettled = !rotating || (releasingNorth ? mb === 0 : Math.abs(angleDiff(bearing, mb)) < 0.02);
+          if (!(posSettled && zoomSettled && bearingSettled)) {
+            window.map.jumpTo(move);
+            didJump = true;
+          }
         } else {
           // Main window: center only; zoom is the user's business.
           var c = window.map.getCenter();
           if (Math.abs(c.lng - d.lng) > 1e-9 || Math.abs(c.lat - d.lat) > 1e-9) {
             window.map.jumpTo(move);
+            didJump = true;
           }
         }
 
         // Let go of the bearing only once north has actually been written back —
         // clearing the flag on the frame we DECIDE to stop would leave the map
-        // parked at the last fraction of a degree.
-        if (rotating && !window.__dd2_rotate__ && bearing === 0) {
+        // parked at the last fraction of a degree. Confirm against a fresh read
+        // (not the local 'bearing', which only records the decision): either this
+        // jumpTo just wrote it, or the map was already exactly there.
+        if (rotating && !window.__dd2_rotate__ && bearing === 0 && (didJump || window.map.getBearing() === 0)) {
           window.__dd2_rotate_active__ = false;
         }
       }
       var el = document.getElementById('__dd2_player_marker__');
       if (el) {
         var p = window.map.project({ lng: d.lng, lat: d.lat });
-        el.style.left = p.x + 'px';
-        el.style.top = p.y + 'px';
+
+        // ── FG: skip DOM writes when the pixel position hasn't changed ──
+        // Setting style.left/top to the same value still dirties the
+        // compositor layer, keeping the webview's compositor busy.  Compare
+        // at 0.1 px precision — sub-pixel differences are invisible.
+        var pxR = Math.round(p.x * 10) / 10;
+        var pyR = Math.round(p.y * 10) / 10;
+        if (el._dd2_lx !== pxR || el._dd2_ly !== pyR) {
+          el.style.left = p.x + 'px';
+          el.style.top = p.y + 'px';
+          el._dd2_lx = pxR;
+          el._dd2_ly = pyR;
+        }
 
         // Facing (from the camera) wins; the movement vector is the fallback for when
         // the camera chain missed a tick. Note the two must not BOTH run: the movement
@@ -721,7 +774,12 @@
           // settled heading-up lands on -90, i.e. the arrow points straight up, and
           // mid-turn it shows the part of the turn the map hasn't caught up with yet.
           var rot = window.__dd2_heading__ - window.map.getBearing();
-          g.setAttribute('transform', 'rotate(' + rot.toFixed(1) + ' 22 22)');
+          var rotS = rot.toFixed(1);
+          // ── FG: skip setAttribute when rotation hasn't changed ──
+          if (g._dd2_rot !== rotS) {
+            g.setAttribute('transform', 'rotate(' + rotS + ' 22 22)');
+            g._dd2_rot = rotS;
+          }
         }
       }
     }

@@ -5,6 +5,88 @@
 // Follow is always on here. The overlay IS the follow view; there's no UI to
 // turn it off, and a locked-center map is the whole point.
 
+// ── rAF THROTTLE (FG fix) ───────────────────────────────────────────
+// DLSS Frame Generation presents at 120 fps, and the webview's Chromium
+// compositor runs at that rate too — producing overlay surfaces 120×/sec
+// that DWM must composite over every game frame. The position feed is ~30 Hz
+// and the camera feed is ~30 Hz, so neither loop has any reason to update
+// faster than ~60 Hz. Capping both at 60 fps lets the compositor go idle
+// between updates; DWM reuses the last overlay surface for the intermediate
+// FG frames, eliminating the GPU contention that caused stutter in generated
+// frames. (arLoop layers its own additional throttle + dirty-flag gate on top
+// of this — see below — so this cap is a coarse, shared ceiling for anything
+// else in either context that calls requestAnimationFrame.)
+const OVERLAY_MAX_FPS = 60;
+const WEBVIEW_MAX_FPS = 60;
+
+function installRAFThrottle(maxFps) {
+  var minMs = 1000 / maxFps;
+  return function(origRAF, origCAF) {
+    var last = 0, queue = [], scheduled = false, nextId = 1;
+    function raf(cb) {
+      var id = nextId++;
+      queue.push({ id: id, cb: cb });
+      // `scheduled` must gate every place that arms the next native tick — a
+      // callback re-arming itself mid-drain (the normal self-perpetuating rAF
+      // pattern, e.g. arLoop/Mapbox's own frame loop) must NOT also cause the
+      // post-drain check in tick() below to arm a second one; that double-arm
+      // compounds every tick with no way to drain, growing unbounded.
+      if (!scheduled) { scheduled = true; origRAF(tick); }
+      return id;
+    }
+    function caf(id) {
+      for (var i = 0; i < queue.length; i++) {
+        if (queue[i].id === id) { queue.splice(i, 1); return; }
+      }
+    }
+    function tick(ts) {
+      if (ts - last < minMs) { origRAF(tick); return; }
+      last = ts; scheduled = false;
+      var f = queue; queue = [];
+      for (var i = 0; i < f.length; i++) { try { f[i].cb(ts); } catch (e) {} }
+      if (!scheduled && queue.length) { scheduled = true; origRAF(tick); }
+    }
+    return { raf: raf, caf: caf };
+  };
+}
+
+// Throttle the overlay window's own rAF (arLoop, CSS animations).
+(function () {
+  if (window.__dd2_raf_throttled) return;
+  window.__dd2_raf_throttled = true;
+  var t = installRAFThrottle(OVERLAY_MAX_FPS)(window.requestAnimationFrame.bind(window), window.cancelAnimationFrame.bind(window));
+  window.requestAnimationFrame = t.raf;
+  window.cancelAnimationFrame = t.caf;
+})();
+
+// Build the throttle code to inject into the webview guest (different JS context).
+// Same logic as installRAFThrottle above, minified to a string — kept in exact
+// lockstep with it (including the cancelAnimationFrame override and the
+// `!scheduled &&` re-arm guard) since Mapbox GL runs in that context and does
+// call cancelAnimationFrame on its own frame handle during teardown/reload.
+function buildRAFThrottleCode(maxFps) {
+  var minMs = 1000 / maxFps;
+  return [
+    '(function(){',
+    '  if(window.__dd2_raf_throttled)return;',
+    '  window.__dd2_raf_throttled=true;',
+    '  var o=window.requestAnimationFrame.bind(window),',
+    '      c=window.cancelAnimationFrame.bind(window),',
+    '      M=' + minMs + ',l=0,q=[],s=false,n=1;',
+    '  window.requestAnimationFrame=function(cb){',
+    '    var id=n++;q.push({id:id,cb:cb});',
+    '    if(!s){s=true;o(t);}return id;};',
+    '  window.cancelAnimationFrame=function(id){',
+    '    for(var i=0;i<q.length;i++){if(q[i].id===id){q.splice(i,1);return;}}};',
+    '  function t(ts){',
+    '    if(ts-l<M){o(t);return;}',
+    '    l=ts;s=false;var f=q;q=[];',
+    '    for(var i=0;i<f.length;i++){try{f[i].cb(ts);}catch(e){}}',
+    '    if(!s&&q.length){s=true;o(t);}}',
+    '})();'
+  ].join('');
+}
+
 const webview = document.getElementById('mapView');
 const mgLogo = document.getElementById('mgLogo');
 
@@ -47,6 +129,9 @@ function runInWebview(code) {
 
 webview.addEventListener('dom-ready', () => {
   webviewReady = true;
+  // Inject rAF throttle FIRST — caps the webview's compositor at 60 fps so DWM
+  // can reuse the old overlay surface for the intermediate FG frames.
+  webview.executeJavaScript(buildRAFThrottleCode(WEBVIEW_MAX_FPS)).catch(() => {});
   // The mapgenie SPA wipes the guest JS context when it navigates, so the guest
   // script has to be re-injected and re-probed after each dom-ready.
   markerInstalled = false;
@@ -691,7 +776,9 @@ window.dd2overlay.onGamePosition((data) => {
   // (the plain `height` is local-frame and can be hundreds of units off — see index.js).
   // Keep the last two, timestamped, so arSamplePlayer can interpolate (see decl above).
   arPlayerPrev = arPlayerCurr;
-  arPlayerCurr = { p: [data.x, data.heightGlobal != null ? data.heightGlobal : data.height, data.y], t: performance.now() };
+  const _posT = performance.now();
+  arPlayerCurr = { p: [data.x, data.heightGlobal != null ? data.heightGlobal : data.height, data.y], t: _posT };
+  markArDirty(_posT);
   updateHud(data);
   if (!calibration) return;
 
@@ -825,14 +912,42 @@ let collectedGuids = new Set();
 let arCamPrev = null;         // { f, t }
 let arCamCurr = null;
 
+// Frame-generation (DLSS-FG / AFMF) doubles the Present rate, and Electron's
+// requestAnimationFrame follows the compositor — so arLoop fires at 120+ Hz
+// instead of 60. Each tick does a full-screen canvas clear + redraw, forcing DWM
+// to recomposite the transparent overlay surface at the boosted rate. Two guards:
+//
+//   1. Throttle: cap renders at 60 Hz regardless of the rAF rate. Markers update
+//      at the camera-feed rate (~60 Hz) anyway, so extra renders produce
+//      identical pixels and waste GPU compositing bandwidth.
+//   2. Dirty flag: skip the clear+redraw entirely when no new camera, player, or
+//      collected-token data has arrived since the last render. This also covers
+//      paused/loading screens where the feed stalls but rAF keeps spinning.
+let arDirty = false;          // new camera/player/collected data since last render
+let arLastRender = 0;         // timestamp of the last actual render
+let arLastDataAt = 0;         // timestamp of the last camera/player/collected update
+const AR_DEFAULT_MAX_FPS = 60;
+
+function markArDirty(t) {
+  arDirty = true;
+  if (t) arLastDataAt = t;
+}
+
 window.dd2overlay.onCommand('camera-frame', (f) => {
+  const t = performance.now();
   arCamPrev = arCamCurr;
-  arCamCurr = { f, t: performance.now() };
+  arCamCurr = { f, t };
+  markArDirty(t);
 });
-window.dd2overlay.loadArPois().then((pois) => { arPois = pois || []; });
+window.dd2overlay.loadArPois().then((pois) => { arPois = pois || []; markArDirty(performance.now()); });
 window.dd2overlay.onCommand('collected-tokens', (data) => {
   collectedGuids = new Set((data && data.guids) || []);
+  markArDirty(performance.now());
 });
+// Window/DPI resize while the feed is paused would skip the canvas size check
+// (it sits below the dirty gate). Force a redraw so the canvas matches the new
+// dimensions instead of showing stale content at the old size.
+window.addEventListener('resize', () => { markArDirty(performance.now()); });
 
 const arLerp = (a, b, t) => a + (b - a) * t;
 const arLerp3 = (A, B, t) => [arLerp(A[0], B[0], t), arLerp(A[1], B[1], t), arLerp(A[2], B[2], t)];
@@ -873,12 +988,50 @@ function arActive() {
   return cfg && cfg.arCollectibles !== false && arCamCurr && arPlayerCurr && arPois.length;
 }
 
+// Marker style per collectible kind — hoisted out of arLoop so the object and
+// closure aren't recreated every frame. Colour AND shape, so each reads at a
+// glance: token = green circle, beetle = yellow diamond, chest = blue square.
+const KIND_STYLE = {
+  token: { color: '#4ade80', shape: 'circle' },
+  beetle: { color: '#ffd24a', shape: 'diamond' },
+  chest: { color: '#4aa3ff', shape: 'square' },
+};
+const styleFor = (k) => KIND_STYLE[k] || KIND_STYLE.token;
+
 function arLoop() {
   requestAnimationFrame(arLoop);
   if (!arActive()) {
     if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; }
     return;
   }
+  // Throttle: cap renders at a configurable max FPS (default 60) even when
+  // frame generation doubles the rAF rate.
+  const cfgAr = cfg.ar || {};
+  const maxFps = typeof cfgAr.maxFps === 'number' ? cfgAr.maxFps : AR_DEFAULT_MAX_FPS;
+  const minInterval = 1000 / Math.max(15, Math.min(120, maxFps));
+  const nowThrottle = performance.now();
+  if (nowThrottle - arLastRender < minInterval) return;
+  // Dirty flag: skip the full-screen clear + redraw when no new camera, player,
+  // or collected-token data has arrived since the last render. Without this,
+  // rAF at 120 Hz would recomposite an identical transparent canvas 60 extra
+  // times per second — pure GPU compositing waste under FG.
+  //
+  // "Still settling": the camera/player interpolation renders a few ms in the
+  // past (interpMs / camInterpMs). After the LAST data sample arrives, the
+  // interpolated value keeps moving toward it for that window. Without this
+  // guard, a dirty-skip would freeze markers in a slightly-stale interpolated
+  // position forever once the feed pauses. Allow renders until the
+  // interpolation has fully converged to the latest sample, plus one frame.
+  const interpMs = typeof cfgAr.interpMs === 'number' ? cfgAr.interpMs : 24;
+  const camInterpMs = typeof cfgAr.camInterpMs === 'number' ? cfgAr.camInterpMs : interpMs;
+  const stillSettling = nowThrottle - arLastDataAt <= Math.max(interpMs, camInterpMs) + minInterval;
+  if (!arDirty && !stillSettling && arDrawn) return;
+  // Do NOT update arLastRender here on a dirty-skip: that would add up to one
+  // frame of latency when data arrives just after an idle skip. Only stamp it
+  // when we actually redraw below.
+  arDirty = false;
+  arLastRender = nowThrottle;
+
   const W = window.innerWidth, H = window.innerHeight;
   const dpr = window.devicePixelRatio || 1;
   if (arCanvas.width !== Math.round(W * dpr) || arCanvas.height !== Math.round(H * dpr)) {
@@ -890,15 +1043,9 @@ function arLoop() {
   ctx.clearRect(0, 0, W, H);
   arDrawn = true;
 
-  const cfgAr = cfg.ar || {};
-  const interpMs = typeof cfgAr.interpMs === 'number' ? cfgAr.interpMs : 24;
-  // Camera and player are interpolated to DIFFERENT render delays on purpose. A marker's
-  // on-screen position depends only on the camera (POI vs camera basis) — the player only
-  // gates culling, size/alpha and the float, all slow — so the camera can run a much
-  // smaller delay (less rotation lag) than the player needs to cover its slower/jerkier
-  // 30Hz feed without freezing-on-latest (the blink). camInterpMs falls back to interpMs.
-  const camInterpMs = typeof cfgAr.camInterpMs === 'number' ? cfgAr.camInterpMs : interpMs;
-  const now = performance.now();
+  // cfgAr, interpMs, camInterpMs, and nowThrottle were computed above the dirty
+  // gate. Reuse them — they haven't changed.
+  const now = nowThrottle;
   const cam = arSampleCamera(now - camInterpMs);
   const player = arSamplePlayer(now - interpMs);
   if (!cam || !player) { if (arDrawn) { arCtx.clearRect(0, 0, arCanvas.width, arCanvas.height); arDrawn = false; } return; }
@@ -972,15 +1119,6 @@ function arLoop() {
   const edgeItems = items.filter((i) => i.clamped).sort((a, b) => a.dist - b.dist).slice(0, edgeMax);
   const draw = [...edgeItems, ...onScreen];
 
-  // Marker style per collectible kind — colour AND shape, so each reads at a glance:
-  //   token  = green circle (it's a coin)   beetle = yellow diamond (golden beetle)
-  //   chest  = blue square
-  const KIND_STYLE = {
-    token: { color: '#4ade80', shape: 'circle' },
-    beetle: { color: '#ffd24a', shape: 'diamond' },
-    chest: { color: '#4aa3ff', shape: 'square' },
-  };
-  const styleFor = (k) => KIND_STYLE[k] || KIND_STYLE.token;
   // Trace the marker shape into the current path, centred at (x,y) with radius ~size.
   const shapePath = (shape, x, y, size) => {
     ctx.beginPath();
