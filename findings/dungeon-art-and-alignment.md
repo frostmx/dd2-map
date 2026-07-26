@@ -134,6 +134,13 @@ layer. Two things that cost debugging:
   - **Ancient Battleground (450) sits at exactly 0.5× the inset scale = 1.0× world scale**,
     which suggests it isn't drawn as an inset at all.
 
+  Vernworth Castle's manually aligned floors initially exported `xShared 1.0031–1.0041`.
+  That was the same sub-percent hand-fit scatter, not evidence of another custom scale:
+  the aligner had seeded them from the legacy `2456|` transform at `0.9612756×`, so its
+  relative slider read about `1.044` even though the resulting absolute scale was only
+  `1.004×`. The five inset floors were normalised to shared scale `1.000`, preserving each
+  aligned box centre by adjusting `c,f`; 1F remains on the world affine.
+
   **Identity errors are common, and match score does not find them (2026-07-20).** 13 dungeons
   were pointing at the wrong mapgenie subregion. `473` ("Coastal Cavern B1F", really Mountain
   Shrine) was found by its tell — score 0.3507, barely over the old 0.30 trust gate, claiming a
@@ -160,11 +167,16 @@ Three generators, all writing self-contained pages that fetch mapgenie tiles liv
   what produced the conformal calibration. Aligning *cities individually* was tried first and
   abandoned: each city could be made to fit, but no single transform satisfied all of them at
   once, which is exactly what a one-piece overlay makes unambiguous.
-- **`genDungeonAligner.js` → `aligner.html`** — per-dungeon alignment for all 113 dungeons with
-  baked art. Exports the **full** transform (`a b c d e f` + rotation), not just `c,f` against a
-  shared linear — that assumption is what hid the scale story. Carries ✓/✗/? verdicts plus a
-  free-text note per tile (same pattern as `edgeGallery.js`) so identity errors can be reported
-  in the same paste as the transforms, and flags suspect tiles (see above).
+- **`genDungeonAligner.js` → `aligner.html`** — per-area alignment for all placed LocalAreas
+  with baked art. Normally the authored transform is keyed directly by LocalArea; an
+  explicitly mapped town such as Vernworth Castle may instead seed several floor cards from
+  one shared `transformKey` and export each result under its real LocalArea id. Exports the
+  **full** transform (`a b c d e f` + rotation), not just `c,f` against a shared linear — that
+  assumption is what hid the scale story. Carries ✓/✗/? verdicts plus a free-text note per
+  tile (same pattern as `edgeGallery.js`) so identity errors can be reported in the same paste
+  as the transforms, and flags suspect tiles (see above). Its scale control is **absolute
+  against `insetLinear`**: `1.000` always means the shared inset scale, not “1× whatever
+  transform this card happened to start from”.
 - Art is referenced by **`file://`**, not base64: embedding all 127 PNGs made a 12.5 MB page
   versus 43 KB. Requires opening the page from the local filesystem.
 
@@ -173,8 +185,9 @@ Two things learned the hard way in this tooling:
 - **mapgenie's world-v1 tiles stop at z16** (z17+ is HTTP 403, verified at two locations). Zoom
   must therefore be an integer tile level clamped to ≤16 **plus** a fractional CSS scale;
   otherwise zooming past the fixed level just upscales blurry tiles while sharper ones exist.
-- **Overworld areas must be excluded from the dungeon aligner.** Towns/cities (`overworld:true`)
-  ride the *world* affine, not `insetLinear`, so drawing them there puts them at ~2× scale in
-  empty space with no art beneath — which reads as "the tool is broken" but is correct
-  behaviour applied to the wrong set.
+- **Ordinary overworld areas must be excluded from the dungeon aligner.** Towns/cities
+  (`overworld:true`) normally ride the *world* affine, so drawing them there puts them at ~2×
+  scale in empty space. The exception is an overworld-classified LocalArea with an explicit
+  `transformKey`, currently Vernworth Castle: MapGenie gives it a real inset region, so its
+  floor art belongs in the aligner even though the game classifies it as a town.
 

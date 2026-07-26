@@ -18,23 +18,37 @@
     "148": {
       "name": "Vernworth Castle",
       "floor": "2F",
-      "src": "game",
-      "c": null,
-      "f": null
+      "src": "aligned",
+      "c": -0.472914125001,
+      "f": 0.723835957046
     },
     "149": {
       "name": "Vernworth Castle",
       "floor": "B1F",
-      "src": "game",
-      "c": null,
-      "f": null
+      "src": "aligned",
+      "c": -0.483219,
+      "f": 0.697495
     },
     "150": {
       "name": "Vernworth Castle",
       "floor": "B2F",
-      "src": "game",
-      "c": null,
-      "f": null
+      "src": "aligned",
+      "c": -0.479777,
+      "f": 0.680247
+    },
+    "151": {
+      "name": "Vernworth Castle",
+      "floor": "3F",
+      "src": "aligned",
+      "c": -0.473298,
+      "f": 0.745903
+    },
+    "152": {
+      "name": "Vernworth Castle",
+      "floor": "4F",
+      "src": "aligned",
+      "c": -0.473178,
+      "f": 0.753989
     },
     "337": {
       "c": -0.761985,

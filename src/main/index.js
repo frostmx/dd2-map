@@ -643,30 +643,43 @@ function startMemoryPolling() {
           areaName = entry.title;
           areaFloor = entry.floorLabel || '';
           areaSource = 'pointer';
-          // A TOWN_ area (overworld:true) is a settlement, not a dungeon: mapgenie draws no
-          // inset for it, and DD2 reports true world coords indoors, so the marker must ride
-          // the world affine. areaKey stays null (forArea returns worldCal for null) and we
-          // only take the NAME. Naming it after a dungeon inset is exactly the bug that made
-          // Vernworth read as "Waterfall Cave" -- see .map/nameTowns.py.
-          if (!entry.overworld) {
+          // Most TOWN_ areas (overworld:true) are settlements with no MapGenie inset, but
+          // Vernworth Castle is the exception: six LocalAreas/floors share MapGenie's one
+          // floorless region. `transformKey` expresses that projection separately from the
+          // LocalArea id, which still selects the correct per-floor edge art.
+          if (entry.transformKey) {
+            areaKey = entry.transformKey;
+            if (typeof entry.subregionId === 'number') subregionId = entry.subregionId;
+            if (bakedEdgeIds.has(la.localArea) && areas.areas[areaKey]) {
+              edgeLocalArea = la.localArea;
+              edgeBox = entry.box;
+            }
+          } else if (!entry.overworld) {
             areaKey = String(la.localArea);   // forArea places it if areas.areas[key] exists
             if (entry.isDungeon && typeof entry.subregionId === 'number') subregionId = entry.subregionId;
             if (entry.isDungeon && areas.areas[areaKey]) {
               edgeLocalArea = la.localArea;
               edgeBox = entry.box;
             }
-          } else if (bakedEdgeIds.has(la.localArea)) {
-            // A town with its OWN detailed edge map (bakeTownEdges.py): the game's town-plan
-            // texture, pinned at the SOLVED world box (texBox — a town texture has margins, so
-            // its game box isn't its art extent) and placed by the world affine (areaKey null,
-            // forArea returns worldCal), so the marker rides the same frame.
-            edgeLocalArea = la.localArea;
-            edgeBox = entry.texBox || entry.box;
-          } else if (hasWorldEdge && localAreas.overworld) {
-            // No detailed town map baked (or low-confidence solve): fall back to the open
-            // overworld's world edge — the town's streets are on it too, just at lower detail.
-            edgeLocalArea = -1;
-            edgeBox = localAreas.overworld.box;
+          } else {
+            // The tracker still runs as a fallback and may have selected a nearby dungeon
+            // from insideFlag before the pointer resolved this ordinary town floor. The
+            // pointer is authoritative here: a town with no explicit transformKey rides the
+            // overworld affine, so explicitly discard that inherited inset key.
+            areaKey = null;
+            if (bakedEdgeIds.has(la.localArea)) {
+              // A town with its OWN detailed edge map (bakeTownEdges.py): the game's town-plan
+              // texture, pinned at the SOLVED world box (texBox — a town texture has margins,
+              // so its game box isn't its art extent) and placed by the world affine (areaKey
+              // null, forArea returns worldCal), so the marker rides the same frame.
+              edgeLocalArea = la.localArea;
+              edgeBox = entry.texBox || entry.box;
+            } else if (hasWorldEdge && localAreas.overworld) {
+              // No detailed town map baked (or low-confidence solve): fall back to the open
+              // overworld's world edge — the town's streets are on it too, at lower detail.
+              edgeLocalArea = -1;
+              edgeBox = localAreas.overworld.box;
+            }
           }
         }
       } else if (la && la.localArea === -1 && hasWorldEdge && localAreas.overworld) {

@@ -108,6 +108,17 @@ building**: `Home` binds the nearest place POI to the spot you're standing on, m
 to `areas.json` under `places`, and from then on that doorway is recognised — the HUD names
 the building and no dungeon is ever guessed there again.
 
+**A pointer-resolved town must explicitly decide its transform.** The tracker still ticks
+first and can select a nearby dungeon while `insideFlag` is set, so an ordinary town with
+no inset must clear the inherited `areaKey` and ride the world affine. Vernworth Castle is
+the exception: its LocalAreas are town floors (`overworld: true`), but MapGenie draws
+2F/3F/4F/B1F/B2F at distinct placements inside region 2456. Those rows carry an explicit
+per-LocalArea `transformKey` and authored transform; 1F (`147`) deliberately has none and
+stays in world coordinates. The transform key places MapGenie; the LocalArea continues to
+select the correct per-floor edge art. Conflating those identities either leaves upper and
+basement floors on the world or tries null placeholder transforms and freezes both
+renderers.
+
 **`Home` is unbound by default now** (`hotkeys.rememberPlace: null`, `overlayConfig.js`) —
 the LocalArea pointer names buildings on its own, so the manual bind is no longer needed.
 `bind()` skips a null accelerator and `describeHint` gates the offer on

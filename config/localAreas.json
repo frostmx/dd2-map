@@ -14,6 +14,8 @@
    "floorNo": -1,
    "floorLabel": "B1F",
    "isDungeon": false,
+   "transformKey": "149",
+   "subregionId": 2456,
    "box": [
     256,
     -1083,
@@ -54,6 +56,8 @@
    "floorNo": 1,
    "floorLabel": "2F",
    "isDungeon": false,
+   "transformKey": "148",
+   "subregionId": 2456,
    "box": [
     256,
     -1083,
@@ -74,6 +78,8 @@
    "floorNo": 2,
    "floorLabel": "3F",
    "isDungeon": false,
+   "transformKey": "151",
+   "subregionId": 2456,
    "box": [
     256,
     -1083,
@@ -94,6 +100,8 @@
    "floorNo": 3,
    "floorLabel": "4F",
    "isDungeon": false,
+   "transformKey": "152",
+   "subregionId": 2456,
    "box": [
     256,
     -1083,
@@ -114,6 +122,8 @@
    "floorNo": -2,
    "floorLabel": "B2F",
    "isDungeon": false,
+   "transformKey": "150",
+   "subregionId": 2456,
    "box": [
     256,
     -1083,

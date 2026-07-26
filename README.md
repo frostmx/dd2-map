@@ -33,17 +33,26 @@ that's a Windows limitation, not something the app can work around.
 
 | Key | Does |
 |---|---|
-| `F8` | Overlay on / off (also hides the control window while it's up). Always comes up **icons-only**. |
-| `F9` | Base map on / off — off leaves just the POI icons floating over the world |
+| `F8` | Overlay on / off (also hides the control window while it's up). Comes back in whatever mode you left it in. |
+| `F9` | Cycle the overlay's map mode: **icons-only → full map → windowed box** → back to icons-only |
 | `F10` / `F11` | Zoom out / in |
 | `Insert` | Force enter / exit a dungeon — see [Dungeons](#dungeons) |
 | hold `Alt` | Give the overlay the mouse: click POIs, drag the map, scroll to zoom. Release to hand input back to the game. A blue border shows while it's held. |
 
-**F8 always opens the overlay icons-only** — POI icons floating over the live world,
-no map. That's the mode you play with; the full map is a deliberate `F9` away. The
-mode resets on every F8-on rather than being remembered, so looking something up on
-the map can't leave a full map waiting over your face the next time you bring the
-overlay back mid-fight. (`openIconsOnly: false` in the config flips this.)
+**F9 cycles three map modes; F8 just shows/hides whichever one is current.**
+
+- **Icons-only** — POI icons floating over the live world, no map. The mode you play
+  with, and where the overlay starts on first launch (`openIconsOnly: false` in the
+  config starts it on the full map instead).
+- **Full map** — the ordinary fullscreen mapgenie view.
+- **Windowed box** — the map in a movable, resizable panel (drag the top bar to move
+  it, the edges/corners to resize) instead of covering the whole screen. Its position
+  and size are remembered as fractions of the screen, so they survive a resolution
+  change.
+
+Toggling the overlay off and back on with `F8` **preserves whatever mode F9 last
+left it in** — it no longer snaps back to icons-only, so a full map or windowed box
+you had up stays up.
 
 The marker is a **dot with an arrow**: the dot is your position, the arrow points
 where you're heading. There's no facing angle in memory, so the heading comes from
@@ -70,6 +79,26 @@ set. Tick *Auto-zoom* in the control window to turn it on: after you've been
 *standing* zoom, and running pulls back from wherever you set it — so the two
 never fight. Turning it off mid-run glides straight back to your standing zoom.
 
+### Map style
+
+The full-map and windowed-box modes can draw either mapgenie's ordinary full-colour
+raster, or our own **edge art** — line art baked from the game's own map textures —
+over the same tiles. Pick one with the *Full color* / *Edge* radio buttons in the
+control window (`mapStyle` in the config). Edge is the default look the overlay is
+built around; if no edge art has been baked for the area you're in it just falls
+back to the raster.
+
+### AR collectible markers
+
+A checkbox in the control window (`arCollectibles`, on by default) projects nearby
+**Seeker's Tokens** (green circles) and **Golden Trove Beetles** (yellow diamonds)
+onto the overlay at the collectible's real position in 3D, using the game's own
+camera basis and field of view — not a map-plane icon. Markers fade in with
+distance, clamp to the screen edge as arrows when off-screen, and drop out once
+you've actually picked the collectible up. The `ar` block in `config/overlay.json`
+tunes range, marker size, and the render-interpolation delays that keep the effect
+from jittering; it's tuning-only, with no control-window UI of its own.
+
 ### Opacity and brightness
 
 Sliders in the control window's panel, live while you drag them, and persisted.
@@ -92,13 +121,16 @@ nudged up automatically as it darkens, or roads and labels turn to mud.
 ### Tuning
 
 Everything about how the overlay feels lives in `config/overlay.json` — edit and
-relaunch, no code changes. (In a packaged build the live copy is in
-`%APPDATA%\dd2-map\config\` — see below.)
+relaunch, no code changes.
 
 | Key | Meaning |
 |---|---|
 | `hotkeys` | Rebind any of the keys (any Electron accelerator string) |
-| `openIconsOnly` | **Default `true`.** F8 always opens the overlay icons-only, re-asserted on every toggle-on. Set `false` to have it open showing the full map. |
+| `openIconsOnly` | **Default `true`.** Which of the three F9 modes the overlay starts in on launch (icons-only vs. full map). F9/F8 take over from there — see [Overlay](#overlay). |
+| `mapStyle` | `'edge'` (default) or `'color'` — see [Map style](#map-style) |
+| `windowRect` | The windowed-box mode's position/size, as screen fractions. Written automatically when you drag or resize it. |
+| `arCollectibles` | **Default `true`.** The AR collectible markers checkbox — see [AR collectible markers](#ar-collectible-markers). |
+| `ar` | Tuning for the AR markers (range, size, interpolation delays). No control-window UI; hand-edit only. |
 | `baseZoom` | The standing zoom. Set by `F10`/`F11` and persisted; `null` = adopt the map's own zoom on first run. The map's real range is 7–16. |
 | `zoomStep` | How far one `F10`/`F11` press moves the base zoom |
 | `autoZoom` | **Default `false`.** The checkbox in the control window. The four keys below only apply when it's on. |
@@ -113,6 +145,10 @@ relaunch, no code changes. (In a packaged build the live copy is in
 | `hideWhenGameUnfocused` | Hide the overlay when you alt-tab away from DD2 |
 | `hideMainWindowWithOverlay` | Hide the control window while the overlay is up |
 | `focusable` | Default `true`: Alt focuses the overlay so the game releases the cursor. Set `false` if you'd rather the game never lose focus — but then the cursor stays pinned at screen centre and POIs can't be clicked. |
+| `dungeonEnterRadius` | How close to a known dungeon doorway (game units) the "inside" flag is taken as *that* dungeon. Default 20 — see [Dungeons](#dungeons). |
+| `placeRadius` | How far `Home` (dormant by default) will bind or recognise a named building. Default 40. |
+| `areaHud` | **Default `true`.** The overlay's area readout — where you are, the nearest dungeon, what to press when the app is unsure. |
+| `areaHudRadius` | How near a dungeon has to be before the readout mentions it (game units). Default 150 — deliberately wider than `dungeonEnterRadius`, so it can tell you an entrance is near before you're close enough to trigger it. |
 
 When run from a terminal, startup prints a `[overlay] map probe:` line with the
 map's canvas alpha, real zoom range and layer count, plus a loud warning for the
@@ -163,44 +199,28 @@ with no entrance in mapgenie's data). There the overlay names its best guess and
 - `Insert` — force in / out, accepting that guess (it skips the entrance radius, because
   then the call is yours).
 
-## Building a portable .exe
+## Offline map
 
-```
-npm run dist
-```
-
-Produces `dist/DD2Map.exe` — a single ~72 MB portable binary. No installer, and no
-Node or Electron needed on the target machine. Just run it.
-
-`config/calibration.json` and `config/overlay.json` are bundled, so the .exe ships
-already calibrated and with your tuned settings. (`overlay.json` is gitignored, so
-on a fresh clone it simply isn't there — the build still works and the app falls
-back to the defaults in `src/main/overlayConfig.js`.)
-
-Two things about the packaged build that are easy to get wrong:
-
-- **Settings are written to `%APPDATA%\dd2-map\config\`, not next to the .exe.**
-  The bundled `config/` lives inside `app.asar`, which is **read-only** — writing
-  there fails silently, so calibration and every slider would appear to save and
-  then be gone on restart. `configStore.js` writes to userData instead, seeding
-  from the copy shipped inside the asar on first run. (In dev it still uses the
-  repo's `config/`, so hand-editing `config/overlay.json` works as you'd expect.)
-- **Code signing is off** (`win.signAndEditExecutable: false`). electron-builder
-  otherwise downloads its `winCodeSign` package, which contains macOS symlinks that
-  Windows refuses to extract without Developer Mode or admin — the build dies
-  there. The cost is that the .exe carries the default Electron icon and metadata.
-  Turn it back on (and enable Developer Mode) if you want those.
+Both windows can serve the map from a local cache instead of mapgenie.io. Pick
+**Auto** (use the cache if mapgenie is unreachable), **Online**, or **Offline** with
+the radio buttons in the control window. The first time a map source is available,
+the app mirrors its tiles and page assets to `%APPDATA%\dd2-map\mapcache` so a later
+session can run with mapgenie fully unreachable — see `findings/offline-cache.md`
+for how the caching and local HTTPS interception work.
 
 ## Repo layout
 
 - `src/main/` — Electron main: the 30 Hz memory poll, hotkeys, the overlay window,
   area tracking (`areaTracker.js`), the LocalArea floor reader (`localAreaReader.js`),
-  and the offline map cache (`tileCache.js`, `httpMirror.js`, `assetCapture.js`).
+  the game-camera and collected-item readers behind AR collectibles
+  (`cameraFrameReader.js`, `generateManagerReader.js`), and the offline map cache
+  (`tileCache.js`, `httpMirror.js`, `assetCapture.js`).
 - `src/renderer/` — both windows, and `mapAgent.js`, the script injected into the
   mapgenie page (marker, follow, zoom, icons-only, hide-found, found-sync, offline).
 - `config/` — `dd2.offsets.json` (the memory findings), `calibration.json` (the
-  hand-authored world affine), `dungeons.json` (the per-dungeon inset transforms, app
-  read-only), and `areas.json` (buildings you've named).
+  hand-authored world affine), `dungeons.json` + `localAreas.json` + `dd2.localarea.json`
+  (the per-dungeon inset transforms and the LocalArea floor lookup, app read-only),
+  and `areas.json` (buildings you've named).
 - `tools/` — the reverse-engineering scripts the offsets were found with. Not part
   of the app; run them from the repo root (`node tools/testChains.js`). Their dumps
   and logs are gitignored — gigabytes, and all reproducible.
